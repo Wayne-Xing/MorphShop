@@ -1,0 +1,42 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(dir /s /b *.py *.tsx *.ts *.json *.yml *.md)",
+      "Bash(docker-compose:*)",
+      "Bash(python -m venv:*)",
+      "Bash(venvScriptsactivate)",
+      "Bash(pip install:*)",
+      "Bash(./venv/Scripts/pip install:*)",
+      "Bash(./venv/Scripts/python:*)",
+      "Bash(./venv/Scripts/uvicorn:*)",
+      "Bash(npm install)",
+      "Bash(npm run dev)",
+      "Bash(curl:*)",
+      "Bash(.venvScriptspython.exe test_runninghub.py)",
+      "Bash(F:\\\\LLM\\\\ClaudeCode\\\\MorphShop\\\\backend\\\\venv\\\\Scripts\\\\python.exe:*)",
+      "Bash(cmd /c \"F:\\\\LLM\\\\ClaudeCode\\\\MorphShop\\\\backend\\\\venv\\\\Scripts\\\\python.exe F:\\\\LLM\\\\ClaudeCode\\\\MorphShop\\\\backend\\\\test_runninghub.py\")",
+      "Bash(powershell -Command:*)",
+      "WebSearch",
+      "WebFetch(domain:www.runninghub.cn)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:gold-spleen-bf1.notion.site)",
+      "WebFetch(domain:blog.csdn.net)",
+      "Bash(.venvScriptspython.exe -c \"from app.api.tasks import submit_and_poll_task; print\\(''Import OK''\\)\")",
+      "Bash(F:/LLM/ClaudeCode/MorphShop/backend/venv/Scripts/python.exe:*)",
+      "Bash(taskkill:*)",
+      "Bash(tasklist /FI \"IMAGENAME eq python.exe\")",
+      "Bash(findstr:*)",
+      "Bash(tasklist:*)",
+      "Bash(npm install:*)",
+      "Bash(.venvScriptspython.exe -m uvicorn app.main:app --reload --port 8000)",
+      "Bash(timeout /t 5)",
+      "Bash(ren:*)",
+      "Bash(./venv/Scripts/python.exe -m uvicorn:*)",
+      "Bash(git init:*)",
+      "Bash(git remote add:*)",
+      "Bash(git reset:*)",
+      "Bash(git add:*)"
+    ]
+  }
+}
