@@ -51,7 +51,8 @@ class Settings(BaseSettings):
     daily_user_limit_money: float = 10.0
     daily_user_limit_tasks: int = 50
     global_balance_warning: float = 100.0
-    max_task_timeout: int = 300  # seconds
+    # Each individual workflow step can take a long time; default to 1 hour.
+    max_task_timeout: int = 3600  # seconds
 
     # CORS - comma-separated list
     cors_origins: str = "http://localhost:3000"

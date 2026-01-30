@@ -1,4 +1,8 @@
 """Task management API routes."""
+from datetime import datetime
+from pathlib import Path
+from urllib.parse import urlparse
+
 from fastapi import APIRouter, HTTPException, status, Request, BackgroundTasks
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
@@ -21,6 +25,52 @@ from app.services.usage_service import UsageService
 from app.utils.rate_limiter import limiter
 
 router = APIRouter()
+
+
+def _is_external_url(value: str | None) -> bool:
+    if not value:
+        return False
+    return value.startswith("http://") or value.startswith("https://")
+
+
+def _safe_filename_component(value: str) -> str:
+    # Keep Unicode (project names), but remove filesystem/path separator and control chars.
+    bad = ['\\', '/', ':', '*', '?', '"', "<", ">", "|", "\r", "\n", "\t"]
+    out = value.strip()
+    for ch in bad:
+        out = out.replace(ch, "_")
+    out = " ".join(out.split())  # collapse whitespace
+    return out[:120] if len(out) > 120 else out
+
+
+def _guess_ext(result_url: str | None, task_type: str, outputs: list[dict] | None = None) -> str:
+    if result_url:
+        path = urlparse(result_url).path
+        ext = Path(path).suffix
+        if ext:
+            return ext.lower()
+
+    if outputs:
+        first = outputs[0] if outputs else None
+        if first:
+            output_type = first.get("outputType") or first.get("output_type")
+            if output_type and isinstance(output_type, str):
+                if not output_type.startswith("."):
+                    return f".{output_type.lower()}"
+                return output_type.lower()
+
+    return ".mp4" if task_type == "video" else ".png"
+
+
+def _mime_from_ext(ext: str) -> str:
+    ext = ext.lower().lstrip(".")
+    return {
+        "png": "image/png",
+        "jpg": "image/jpeg",
+        "jpeg": "image/jpeg",
+        "webp": "image/webp",
+        "mp4": "video/mp4",
+    }.get(ext, "application/octet-stream")
 
 
 async def verify_project_access(
@@ -79,8 +129,10 @@ async def create_try_on_task(
             detail=error,
         )
 
-    # Verify project access
-    await verify_project_access(task_data.project_id, current_user.id, db)
+    # Verify project access + workflow enabled
+    project = await verify_project_access(task_data.project_id, current_user.id, db)
+    if not project.enable_try_on:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Try-on workflow is disabled for this project")
 
     # Get assets
     model_image = await get_asset(task_data.model_image_id, current_user.id, db)
@@ -123,7 +175,9 @@ async def create_background_task(
             detail=error,
         )
 
-    await verify_project_access(task_data.project_id, current_user.id, db)
+    project = await verify_project_access(task_data.project_id, current_user.id, db)
+    if not project.enable_background:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Background workflow is disabled for this project")
 
     source_image = await get_asset(task_data.source_image_id, current_user.id, db)
     background_image = None
@@ -169,7 +223,9 @@ async def create_video_task(
             detail=error,
         )
 
-    await verify_project_access(task_data.project_id, current_user.id, db)
+    project = await verify_project_access(task_data.project_id, current_user.id, db)
+    if not project.enable_video:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Video workflow is disabled for this project")
 
     source_image = await get_asset(task_data.source_image_id, current_user.id, db)
 
@@ -282,7 +338,9 @@ async def submit_and_poll_task(task_id: int, task_type: str):
     from datetime import datetime, timezone
     from app.database import async_session_maker
     from app.services.runninghub import RunningHubClient, get_app_config
+    from app.config import get_settings
     from app.utils.storage import storage
+    import httpx
 
     async with async_session_maker() as db:
         # Get task from database
@@ -299,6 +357,7 @@ async def submit_and_poll_task(task_id: int, task_type: str):
 
         client = RunningHubClient()
         app_config = get_app_config(task_type)
+        settings = get_settings()
 
         try:
             # Update status to QUEUED
@@ -308,6 +367,21 @@ async def submit_and_poll_task(task_id: int, task_type: str):
 
             # Upload images to RunningHub and build params
             params = {}
+
+            async def load_asset_bytes(asset: Asset) -> bytes:
+                """Load asset bytes from local storage or an external URL."""
+                # External results are stored as URLs; download then re-upload to RunningHub.
+                if _is_external_url(asset.file_path) or _is_external_url(asset.file_url):
+                    url = asset.file_url if _is_external_url(asset.file_url) else asset.file_path
+                    async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, read=300.0)) as http:
+                        resp = await http.get(url)
+                        resp.raise_for_status()
+                        return resp.content
+
+                local_path = storage.get_absolute_path(asset.file_path)
+                with open(local_path, "rb") as f:
+                    return f.read()
+
             if task_type == "try_on":
                 # Get assets to read files
                 model_asset = await db.execute(
@@ -326,14 +400,9 @@ async def submit_and_poll_task(task_id: int, task_type: str):
                     await db.commit()
                     return
 
-                # Read and upload images to RunningHub
-                model_path = storage.get_absolute_path(model_asset.file_path)
-                clothing_path = storage.get_absolute_path(clothing_asset.file_path)
-
-                with open(model_path, "rb") as f:
-                    model_data = f.read()
-                with open(clothing_path, "rb") as f:
-                    clothing_data = f.read()
+                # Read (local or external) and upload images to RunningHub
+                model_data = await load_asset_bytes(model_asset)
+                clothing_data = await load_asset_bytes(clothing_asset)
 
                 model_rh_name = await client.upload_image(model_data, model_asset.filename)
                 clothing_rh_name = await client.upload_image(clothing_data, clothing_asset.filename)
@@ -367,16 +436,12 @@ async def submit_and_poll_task(task_id: int, task_type: str):
                     await db.commit()
                     return
 
-                source_path = storage.get_absolute_path(source_asset.file_path)
-                with open(source_path, "rb") as f:
-                    source_data = f.read()
+                source_data = await load_asset_bytes(source_asset)
                 source_rh_name = await client.upload_image(source_data, source_asset.filename)
 
                 bg_rh_name = None
                 if bg_asset:
-                    bg_path = storage.get_absolute_path(bg_asset.file_path)
-                    with open(bg_path, "rb") as f:
-                        bg_data = f.read()
+                    bg_data = await load_asset_bytes(bg_asset)
                     bg_rh_name = await client.upload_image(bg_data, bg_asset.filename)
 
                 if not source_rh_name:
@@ -404,9 +469,7 @@ async def submit_and_poll_task(task_id: int, task_type: str):
                     await db.commit()
                     return
 
-                source_path = storage.get_absolute_path(source_asset.file_path)
-                with open(source_path, "rb") as f:
-                    source_data = f.read()
+                source_data = await load_asset_bytes(source_asset)
                 source_rh_name = await client.upload_image(source_data, source_asset.filename)
 
                 if not source_rh_name:
@@ -444,7 +507,7 @@ async def submit_and_poll_task(task_id: int, task_type: str):
             # Poll for completion with progress updates
             status_response = await client.wait_for_completion(
                 response.task_id,
-                timeout=app_config.timeout,
+                timeout=settings.max_task_timeout,
                 on_progress=update_progress,
             )
 
@@ -480,19 +543,28 @@ async def submit_and_poll_task(task_id: int, task_type: str):
                     project = project_result.scalar_one_or_none()
 
                     if project:
+                        # Use server *local* time for naming as requested.
+                        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                        base = f"{_safe_filename_component(project.name)}_{task_type}_{ts}"
+                        ext = _guess_ext(status_response.result_url, task_type, outputs=status_response.outputs)
+                        display_name = f"{base}{ext}"
+
                         # Create new asset for the result
                         result_asset = Asset(
                             user_id=project.user_id,
-                            filename=f"result_{task.id}.png",
-                            original_filename=f"result_{task_type}_{task.id}.png",
+                            filename=display_name,
+                            display_name=display_name,
+                            original_filename=display_name,
                             file_path=status_response.result_url,  # Store external URL
                             file_url=status_response.result_url,   # Use external URL directly
                             asset_type=asset_type_map.get(task_type, AssetType.TRY_ON_RESULT),
-                            mime_type="image/png" if task_type != "video" else "video/mp4",
+                            mime_type=_mime_from_ext(ext),
                             file_size=0,  # Unknown for external URL
                         )
                         db.add(result_asset)
                         await db.flush()
+
+                        task.result_asset_id = result_asset.id
 
                         # Update project with result reference
                         if task_type == "try_on":
@@ -511,16 +583,9 @@ async def submit_and_poll_task(task_id: int, task_type: str):
 
         except TimeoutError:
             task.status = TaskStatus.FAILED
-            task.error_message = "Task timed out"
+            task.error_message = "Timeout failed (1h)"
             task.completed_at = datetime.now(timezone.utc)
             await db.commit()
-
-            # Cancel the task on RunningHub
-            if task.runninghub_task_id:
-                try:
-                    await client.cancel_task(task.runninghub_task_id)
-                except Exception:
-                    pass
 
         except Exception as e:
             task.status = TaskStatus.FAILED
@@ -554,10 +619,51 @@ async def runninghub_webhook(
     if status_str == "SUCCESS":
         task.status = TaskStatus.SUCCESS
         task.progress_percent = 100
-        if "outputs" in data:
-            outputs = data["outputs"]
-            if outputs and "fileUrl" in outputs[0]:
-                task.result_url = outputs[0]["fileUrl"]
+        # Support both legacy and current payloads.
+        outputs = data.get("outputs") or data.get("results") or []
+        if outputs:
+            task.result_url = outputs[0].get("fileUrl") or outputs[0].get("url") or task.result_url
+
+        # If we don't have a result asset yet, create one for retention/history/download naming.
+        if task.result_url and not task.result_asset_id:
+            from app.models.asset import AssetType
+            from sqlalchemy import select as _select
+
+            project_result = await db.execute(_select(Project).where(Project.id == task.project_id))
+            project = project_result.scalar_one_or_none()
+            if project:
+                ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                task_type_value = task.task_type.value
+                base = f"{_safe_filename_component(project.name)}_{task_type_value}_{ts}"
+                ext = _guess_ext(task.result_url, task_type_value, outputs=outputs)
+                display_name = f"{base}{ext}"
+
+                asset_type_map = {
+                    "try_on": AssetType.TRY_ON_RESULT,
+                    "background": AssetType.BACKGROUND_RESULT,
+                    "video": AssetType.VIDEO_RESULT,
+                }
+                result_asset = Asset(
+                    user_id=project.user_id,
+                    filename=display_name,
+                    display_name=display_name,
+                    original_filename=display_name,
+                    file_path=task.result_url,
+                    file_url=task.result_url,
+                    asset_type=asset_type_map.get(task_type_value, AssetType.TRY_ON_RESULT),
+                    mime_type=_mime_from_ext(ext),
+                    file_size=0,
+                )
+                db.add(result_asset)
+                await db.flush()
+
+                task.result_asset_id = result_asset.id
+                if task_type_value == "try_on":
+                    project.try_on_result_id = result_asset.id
+                elif task_type_value == "background":
+                    project.background_result_id = result_asset.id
+                elif task_type_value == "video":
+                    project.video_result_id = result_asset.id
 
         # Extract usage data
         if "usage" in data:

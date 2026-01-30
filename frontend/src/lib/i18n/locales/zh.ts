@@ -44,8 +44,16 @@ export const zh: TranslationKeys = {
   header: {
     dashboard: "工作台",
     projects: "项目",
+    results: "结果库",
     settings: "设置",
     language: "语言",
+  },
+
+  results: {
+    title: "结果库",
+    description: "最近 7 天生成的全部结果",
+    empty: "暂无结果",
+    download: "下载",
   },
 
   // Dashboard
@@ -70,7 +78,7 @@ export const zh: TranslationKeys = {
       upload: "上传",
       tryOn: "换装",
       background: "换背景",
-      video: "生成视频",
+      video: "视频",
     },
     stepDescriptions: {
       upload: "上传模特图和服装图",

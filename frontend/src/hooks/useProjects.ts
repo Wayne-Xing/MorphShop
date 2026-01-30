@@ -20,8 +20,15 @@ export function useProjects(page = 1, pageSize = 20) {
     }
   );
 
-  const createProject = async (name: string) => {
-    const project = await api.createProject(name);
+  const createProject = async (
+    name: string,
+    workflows: { enable_try_on: boolean; enable_background: boolean; enable_video: boolean; workflow_steps?: Array<"try_on" | "background" | "video"> } = {
+      enable_try_on: true,
+      enable_background: true,
+      enable_video: true,
+    }
+  ) => {
+    const project = await api.createProjectWithWorkflows({ name, ...workflows });
     mutate();
     return project;
   };
@@ -53,7 +60,20 @@ export function useProject(id: number | null) {
     }
   );
 
-  const updateProject = async (updates: Partial<{ name: string; model_image_id: number; clothing_image_id: number }>) => {
+  const updateProject = async (
+    updates: Partial<{
+      name: string;
+      enable_try_on: boolean;
+      enable_background: boolean;
+      enable_video: boolean;
+      workflow_steps: Array<"try_on" | "background" | "video">;
+      background_person_source: "try_on_result" | "model_image";
+      model_image_id: number;
+      clothing_image_id: number;
+      background_image_id: number;
+      reference_video_id: number;
+    }>
+  ) => {
     if (!id) return;
     const updated = await api.updateProject(id, updates);
     mutate(updated);

@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { api, User } from "@/lib/api";
-import { getStoredToken, isTokenValid } from "@/lib/auth";
+import { getStoredRefreshToken, getStoredToken, isTokenValid } from "@/lib/auth";
 
 export function useAuthState() {
   const [user, setUser] = useState<User | null>(null);
@@ -10,7 +10,23 @@ export function useAuthState() {
 
   const refreshUser = useCallback(async () => {
     const token = getStoredToken();
-    if (!token || !isTokenValid(token)) {
+    const refreshToken = getStoredRefreshToken();
+
+    // Ensure the API client picks up the stored token (module may have been
+    // evaluated during SSR, leaving the in-memory token empty).
+    if (token && isTokenValid(token)) {
+      api.setToken(token);
+    } else if (refreshToken) {
+      // Try to keep the user logged in by refreshing the access token.
+      try {
+        await api.refresh(refreshToken);
+      } catch {
+        api.clearToken();
+        setUser(null);
+        setIsLoading(false);
+        return;
+      }
+    } else {
       setUser(null);
       setIsLoading(false);
       return;

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { Upload, X, Loader2 } from "lucide-react";
 import { cn, formatFileSize } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -8,6 +8,8 @@ import { Button } from "@/components/ui/button";
 interface ImageUploaderProps {
   label: string;
   description?: string;
+  /** Selected local file (for immediate preview before upload completes) */
+  file?: File | null;
   value?: { id: number; url: string; filename: string } | null;
   onChange: (file: File | null) => void;
   onUploadComplete?: (asset: { id: number; url: string; filename: string }) => void;
@@ -20,6 +22,7 @@ interface ImageUploaderProps {
 export function ImageUploader({
   label,
   description,
+  file,
   value,
   onChange,
   onUploadComplete,
@@ -30,6 +33,28 @@ export function ImageUploader({
 }: ImageUploaderProps) {
   const [isDragging, setIsDragging] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
+  const [localPreviewUrl, setLocalPreviewUrl] = useState<string | null>(null);
+
+  // Keep preview URL in sync with selected file (immediate preview before upload completes).
+  useEffect(() => {
+    if (!file) {
+      setLocalPreviewUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        return null;
+      });
+      return;
+    }
+
+    const url = URL.createObjectURL(file);
+    setLocalPreviewUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return url;
+    });
+
+    return () => {
+      URL.revokeObjectURL(url);
+    };
+  }, [file]);
 
   const validateFile = (file: File): string | null => {
     if (!accept.split(",").some((type) => file.type === type.trim())) {
@@ -101,21 +126,23 @@ export function ImageUploader({
         <p className="text-sm text-muted-foreground">{description}</p>
       )}
 
-      {value ? (
+      {localPreviewUrl || value ? (
         <div className="relative rounded-lg border bg-muted/50 p-4">
           <div className="flex items-center gap-4">
             <div className="relative h-20 w-20 overflow-hidden rounded-md bg-muted">
               <img
-                src={value.url}
-                alt={value.filename}
+                src={localPreviewUrl ?? value!.url}
+                alt={file?.name ?? value?.filename ?? "selected"}
                 className="h-full w-full object-cover"
                 width={80}
                 height={80}
               />
             </div>
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium truncate">{value.filename}</p>
-              <p className="text-xs text-muted-foreground">Uploaded</p>
+              <p className="text-sm font-medium truncate">{file?.name ?? value?.filename}</p>
+              <p className="text-xs text-muted-foreground">
+                {isUploading ? "Uploading..." : localPreviewUrl ? "Selected" : "Uploaded"}
+              </p>
             </div>
             <Button
               variant="ghost"

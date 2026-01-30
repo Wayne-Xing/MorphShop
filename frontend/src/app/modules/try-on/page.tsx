@@ -1,18 +1,21 @@
 "use client";
 
 import { useState, useEffect, Suspense } from "react";
+import useSWR from "swr";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowLeft, Loader2, Upload, Wand2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Label } from "@/components/ui/label";
 import { AuthProvider } from "@/components/layout/AuthProvider";
 import { Header } from "@/components/layout/Header";
 import { ImageUploader } from "@/components/workflow/ImageUploader";
 import { TaskProgress } from "@/components/workflow/TaskProgress";
 import { useProject } from "@/hooks/useProjects";
 import { useTaskPolling } from "@/hooks/useTaskPolling";
-import { api, Task } from "@/lib/api";
-import { getErrorMessage } from "@/lib/utils";
+import { api, Task, Asset } from "@/lib/api";
+import { dedupeAssets, getErrorMessage, triggerBrowserDownload } from "@/lib/utils";
 import { useToast } from "@/components/ui/use-toast";
 import { useI18n } from "@/lib/i18n";
 
@@ -25,6 +28,17 @@ function TryOnContent() {
 
   const { project, isLoading: projectLoading, updateProject, refresh: refreshProject } = useProject(
     projectId ? parseInt(projectId) : null
+  );
+
+  const { data: recentInputs } = useSWR(
+    projectId ? ["assets-recent-7d-tryon-inputs"] : null,
+    () =>
+      api.getAssets({
+        days: 7,
+        asset_type: ["model_image", "clothing_image"],
+        limit: 200,
+      }),
+    { revalidateOnFocus: false }
   );
 
   const [modelFile, setModelFile] = useState<File | null>(null);
@@ -98,6 +112,7 @@ function TryOnContent() {
 
   const handleStartTryOn = async () => {
     if (!project?.model_image || !project?.clothing_image) return;
+    if (!project.enable_try_on) return;
 
     setIsSubmitting(true);
     try {
@@ -180,9 +195,50 @@ function TryOnContent() {
               <CardDescription>{t.upload.description}</CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
+              {!project?.enable_try_on && (
+                <div className="rounded-lg border border-dashed p-6 text-sm text-muted-foreground">
+                  Try-on workflow is disabled for this project.
+                </div>
+              )}
+
+              <div className="space-y-2">
+                <Label>Use Existing Model Image</Label>
+                <Select
+                  value={project?.model_image ? String(project.model_image.id) : ""}
+                  onValueChange={async (v) => {
+                    if (!v) return;
+                    try {
+                      await updateProject({ model_image_id: parseInt(v) });
+                      setModelFile(null);
+                      toast({ title: t.common.success });
+                    } catch (err) {
+                      toast({
+                        title: t.errors.uploadFailed,
+                        description: getErrorMessage(err),
+                        variant: "destructive",
+                      });
+                    }
+                  }}
+                  disabled={isUploading || !project?.enable_try_on}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Pick an existing model image (last 7 days)" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {dedupeAssets(recentInputs ?? [])
+                      .filter((a: Asset) => a.asset_type === "model_image" || a.asset_type === "MODEL_IMAGE")
+                      .map((a: Asset) => (
+                        <SelectItem key={a.id} value={String(a.id)}>
+                          {(a.display_name ?? a.original_filename) || `Asset ${a.id}`}
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+              </div>
               <ImageUploader
                 label={t.upload.modelImage}
                 description={t.upload.modelDescription}
+                file={modelFile}
                 value={project?.model_image ? {
                   id: project.model_image.id,
                   url: project.model_image.file_url,
@@ -191,9 +247,45 @@ function TryOnContent() {
                 onChange={setModelFile}
                 isUploading={isUploading}
               />
+
+              <div className="space-y-2">
+                <Label>Use Existing Clothing Image</Label>
+                <Select
+                  value={project?.clothing_image ? String(project.clothing_image.id) : ""}
+                  onValueChange={async (v) => {
+                    if (!v) return;
+                    try {
+                      await updateProject({ clothing_image_id: parseInt(v) });
+                      setClothingFile(null);
+                      toast({ title: t.common.success });
+                    } catch (err) {
+                      toast({
+                        title: t.errors.uploadFailed,
+                        description: getErrorMessage(err),
+                        variant: "destructive",
+                      });
+                    }
+                  }}
+                  disabled={isUploading || !project?.enable_try_on}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Pick an existing clothing image (last 7 days)" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {dedupeAssets(recentInputs ?? [])
+                      .filter((a: Asset) => a.asset_type === "clothing_image" || a.asset_type === "CLOTHING_IMAGE")
+                      .map((a: Asset) => (
+                        <SelectItem key={a.id} value={String(a.id)}>
+                          {(a.display_name ?? a.original_filename) || `Asset ${a.id}`}
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+              </div>
               <ImageUploader
                 label={t.upload.clothingImage}
                 description={t.upload.clothingDescription}
+                file={clothingFile}
                 value={project?.clothing_image ? {
                   id: project.clothing_image.id,
                   url: project.clothing_image.file_url,
@@ -206,7 +298,7 @@ function TryOnContent() {
               {(modelFile || clothingFile) && (
                 <Button
                   onClick={handleUploadImages}
-                  disabled={isUploading}
+                  disabled={isUploading || !project?.enable_try_on}
                   className="w-full"
                 >
                   {isUploading ? (
@@ -284,7 +376,21 @@ function TryOnContent() {
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() => window.open(project.try_on_result!.file_url, '_blank')}
+                      onClick={async () => {
+                        try {
+                          const { blob, filename } = await api.downloadAsset(project.try_on_result!.id);
+                          triggerBrowserDownload(
+                            blob,
+                            filename ?? project.try_on_result!.display_name ?? project.try_on_result!.original_filename
+                          );
+                        } catch (err) {
+                          toast({
+                            title: t.errors.networkError,
+                            description: getErrorMessage(err),
+                            variant: "destructive",
+                          });
+                        }
+                      }}
                     >
                       {t.common.download}
                     </Button>
@@ -302,7 +408,7 @@ function TryOnContent() {
               {!project?.try_on_result && !currentTask && (
                 <Button
                   onClick={handleStartTryOn}
-                  disabled={isSubmitting || !project?.model_image || !project?.clothing_image}
+                  disabled={isSubmitting || !project?.enable_try_on || !project?.model_image || !project?.clothing_image}
                   className="w-full"
                   size="lg"
                 >

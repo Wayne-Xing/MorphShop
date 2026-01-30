@@ -1,5 +1,7 @@
 """Database connection and session management."""
 from collections.abc import AsyncGenerator
+from pathlib import Path
+import asyncio
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
@@ -46,6 +48,29 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
 
 
 async def init_db() -> None:
-    """Initialize database tables."""
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    """Initialize / migrate the database schema.
+
+    We prefer Alembic migrations (supports upgrades on existing DBs). If Alembic
+    isn't available for some reason, we fall back to `create_all()` which only
+    works for a brand new database.
+    """
+
+    def _run_alembic_upgrade() -> None:
+        from alembic import command
+        from alembic.config import Config
+
+        project_root = Path(__file__).resolve().parent.parent  # backend/
+        alembic_ini = project_root / "alembic.ini"
+        cfg = Config(str(alembic_ini))
+        # Ensure Alembic uses the same URL as the running app (DATABASE_URL etc).
+        cfg.set_main_option("sqlalchemy.url", settings.database_url)
+        command.upgrade(cfg, "head")
+
+    try:
+        # Run Alembic in a thread to avoid `asyncio.run()` conflicts inside the
+        # FastAPI event loop (Alembic env.py uses asyncio.run for async engines).
+        await asyncio.to_thread(_run_alembic_upgrade)
+    except Exception:
+        # Last-resort fallback for brand new DBs if migrations cannot run.
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)

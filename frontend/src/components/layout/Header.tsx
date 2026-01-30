@@ -35,7 +35,13 @@ export function Header() {
               {t.header.dashboard}
             </Link>
             <Link
-              href="/workflow"
+              href="/results"
+              className="text-muted-foreground hover:text-foreground transition-colors"
+            >
+              {t.header.results}
+            </Link>
+            <Link
+              href="/dashboard"
               className="text-muted-foreground hover:text-foreground transition-colors"
             >
               {t.dashboard.newProject}

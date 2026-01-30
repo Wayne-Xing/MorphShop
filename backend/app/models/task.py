@@ -11,6 +11,7 @@ from app.database import Base
 
 if TYPE_CHECKING:
     from app.models.project import Project
+    from app.models.asset import Asset
 
 
 class TaskType(str, Enum):
@@ -55,6 +56,12 @@ class Task(Base):
     input_params: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     result_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     thumbnail_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    result_asset_id: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey("assets.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
 
     # Progress
     progress_percent: Mapped[int] = mapped_column(Integer, default=0)
@@ -76,3 +83,4 @@ class Task(Base):
 
     # Relationships
     project: Mapped["Project"] = relationship("Project", back_populates="tasks")
+    result_asset: Mapped["Asset | None"] = relationship("Asset", foreign_keys=[result_asset_id])

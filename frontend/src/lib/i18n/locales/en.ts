@@ -42,8 +42,16 @@ export const en = {
   header: {
     dashboard: "Dashboard",
     projects: "Projects",
+    results: "Results",
     settings: "Settings",
     language: "Language",
+  },
+
+  results: {
+    title: "Results Library",
+    description: "All generated results from the last 7 days",
+    empty: "No results yet",
+    download: "Download",
   },
 
   // Dashboard
@@ -66,7 +74,7 @@ export const en = {
     backToDashboard: "Back to Dashboard",
     steps: {
       upload: "Upload",
-      tryOn: "Try-On",
+      tryOn: "Try-on",
       background: "Background",
       video: "Video",
     },
@@ -156,6 +164,6 @@ export const en = {
     theme: "Theme",
     notifications: "Notifications",
   },
-} as const;
+};
 
 export type TranslationKeys = typeof en;

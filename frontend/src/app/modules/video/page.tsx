@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect, Suspense } from "react";
+import { useState, useEffect, Suspense, useMemo } from "react";
+import useSWR from "swr";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowLeft, Loader2, Video, Play, Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -9,11 +10,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Label } from "@/components/ui/label";
 import { AuthProvider } from "@/components/layout/AuthProvider";
 import { Header } from "@/components/layout/Header";
+import { ImageUploader } from "@/components/workflow/ImageUploader";
 import { TaskProgress } from "@/components/workflow/TaskProgress";
 import { useProject } from "@/hooks/useProjects";
 import { useTaskPolling } from "@/hooks/useTaskPolling";
-import { api, Task } from "@/lib/api";
-import { getErrorMessage } from "@/lib/utils";
+import { api, Task, Asset } from "@/lib/api";
+import { dedupeAssets, getErrorMessage, triggerBrowserDownload } from "@/lib/utils";
 import { useToast } from "@/components/ui/use-toast";
 import { useI18n } from "@/lib/i18n";
 
@@ -28,6 +30,27 @@ function VideoContent() {
     projectId ? parseInt(projectId) : null
   );
 
+  const { data: recentAssets } = useSWR(
+    projectId ? ["assets-recent-7d-video"] : null,
+    () =>
+      api.getAssets({
+        days: 7,
+        asset_type: ["background_result", "try_on_result", "model_image"],
+        limit: 200,
+      }),
+    { revalidateOnFocus: false }
+  );
+
+  const uniqueAssets = useMemo(() => dedupeAssets(recentAssets ?? []), [recentAssets]);
+
+  const assetById = useMemo(() => {
+    const map = new Map<number, Asset>();
+    for (const a of uniqueAssets) map.set(a.id, a);
+    return map;
+  }, [uniqueAssets]);
+
+  const [sourceFile, setSourceFile] = useState<File | null>(null);
+  const [selectedSourceAssetId, setSelectedSourceAssetId] = useState<number | null>(null);
   const [motionType, setMotionType] = useState("default");
   const [duration, setDuration] = useState(3);
   const [currentTask, setCurrentTask] = useState<Task | null>(null);
@@ -74,7 +97,14 @@ function VideoContent() {
   const handleStartVideo = async () => {
     if (!project) return;
 
-    const sourceImageId = project.background_result?.id ?? project.try_on_result?.id;
+    if (!project.enable_video) return;
+
+    let sourceImageId: number | undefined = selectedSourceAssetId ?? undefined;
+    if (!sourceImageId && sourceFile) {
+      const srcAsset = await api.uploadImage(sourceFile, "model_image");
+      sourceImageId = srcAsset.id;
+    }
+    sourceImageId = sourceImageId ?? project.background_result?.id ?? project.try_on_result?.id ?? undefined;
     if (!sourceImageId) return;
 
     setIsSubmitting(true);
@@ -124,7 +154,8 @@ function VideoContent() {
     );
   }
 
-  const sourceImage = project?.background_result || project?.try_on_result;
+  const selectedSource = selectedSourceAssetId ? assetById.get(selectedSourceAssetId) : null;
+  const sourceImage = selectedSource || project?.background_result || project?.try_on_result;
 
   return (
     <div className="min-h-screen bg-background">
@@ -156,7 +187,7 @@ function VideoContent() {
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Play className="h-5 w-5" />
-                {sourceImage === project?.background_result ? t.background.result : t.tryOn.result}
+                Source Image
               </CardTitle>
               <CardDescription>{t.video.description}</CardDescription>
             </CardHeader>
@@ -173,13 +204,6 @@ function VideoContent() {
                 <div className="rounded-lg border border-dashed p-8 text-center text-muted-foreground">
                   <Video className="h-12 w-12 mx-auto mb-4 opacity-50" />
                   <p>{t.errors.assetNotFound}</p>
-                  <Button
-                    variant="link"
-                    className="mt-2"
-                    onClick={() => router.push(`/modules/try-on?project=${projectId}`)}
-                  >
-                    {t.tryOn.startTryOn}
-                  </Button>
                 </div>
               )}
             </CardContent>
@@ -195,8 +219,45 @@ function VideoContent() {
               <CardDescription>{t.video.description}</CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
+              {!project?.enable_video && (
+                <div className="rounded-lg border border-dashed p-6 text-sm text-muted-foreground">
+                  Video workflow is disabled for this project.
+                </div>
+              )}
+
+              <div className="space-y-3">
+                <Label>Source Image</Label>
+                <Select
+                  value={selectedSourceAssetId ? String(selectedSourceAssetId) : ""}
+                  onValueChange={(v) => setSelectedSourceAssetId(v ? parseInt(v) : null)}
+                  disabled={!project?.enable_video}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Pick an existing image/result (last 7 days)" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {uniqueAssets
+                      .filter((a) => a.mime_type.startsWith("image/"))
+                      .map((a) => (
+                        <SelectItem key={a.id} value={String(a.id)}>
+                          {(a.display_name ?? a.original_filename) || `Asset ${a.id}`}
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+
+                <div className="text-xs text-muted-foreground">Or upload a new source image:</div>
+                <ImageUploader
+                  label="Upload Source"
+                  description="Used as the first frame for video generation."
+                  file={sourceFile}
+                  onChange={setSourceFile}
+                  isUploading={isSubmitting}
+                />
+              </div>
+
               {/* Video Settings */}
-              {sourceImage && !project?.video_result && !currentTask && (
+              {(sourceImage || sourceFile) && !project?.video_result && !currentTask && (
                 <div className="space-y-4">
                   <div className="space-y-2">
                     <Label>{t.video.motionType}</Label>
@@ -253,7 +314,21 @@ function VideoContent() {
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() => window.open(project.video_result!.file_url, '_blank')}
+                      onClick={async () => {
+                        try {
+                          const { blob, filename } = await api.downloadAsset(project.video_result!.id);
+                          triggerBrowserDownload(
+                            blob,
+                            filename ?? project.video_result!.display_name ?? project.video_result!.original_filename
+                          );
+                        } catch (err) {
+                          toast({
+                            title: t.errors.networkError,
+                            description: getErrorMessage(err),
+                            variant: "destructive",
+                          });
+                        }
+                      }}
                     >
                       <Download className="h-4 w-4 mr-2" />
                       {t.common.download}
@@ -263,10 +338,10 @@ function VideoContent() {
               )}
 
               {/* Start Button */}
-              {!project?.video_result && !currentTask && sourceImage && (
+              {!project?.video_result && !currentTask && (sourceImage || sourceFile) && (
                 <Button
                   onClick={handleStartVideo}
-                  disabled={isSubmitting}
+                  disabled={isSubmitting || !project?.enable_video}
                   className="w-full"
                   size="lg"
                 >

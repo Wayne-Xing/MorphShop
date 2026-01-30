@@ -176,10 +176,11 @@ npm test
 
 ### Projects
 - `GET /api/projects` - List user's projects
-- `POST /api/projects` - Create project
+- `POST /api/projects` - Create project (supports workflow toggles)
 - `GET /api/projects/{id}` - Get project details
 - `PATCH /api/projects/{id}` - Update project
 - `DELETE /api/projects/{id}` - Delete project
+- `GET /api/projects/{id}/results` - List successful workflow result assets (last N days)
 
 ### Tasks
 - `POST /api/tasks/try-on` - Create try-on task
@@ -190,6 +191,8 @@ npm test
 
 ### Files
 - `POST /api/upload/image` - Upload image
+- `GET /api/assets` - List current user's assets (filter by type / last N days)
+- `GET /api/assets/{asset_id}/download` - Download with controlled filename (Content-Disposition)
 
 ## Environment Variables
 
@@ -210,6 +213,70 @@ See `.env.example` for all configuration options. Key variables:
 
 Each step creates a Task that is processed asynchronously.
 
+### Unified Workflow Page (All Combinations)
+
+The primary UI is `/workflow?project=ID`, which renders the enabled workflow steps on a single page and manages the full process:
+
+- Global controls: start all (sequential) / stop all (request stop-after-current).
+- Per-step section: left = inputs, right = progress + outputs + "run this step".
+- Busy-guard: if any task is running, the UI blocks starting new steps and asks the user to wait.
+
+### Workflow Order (Drag & Drop)
+
+Projects store an ordered step list in `projects.workflow_steps` (JSON text list, e.g. `["background","try_on"]`).
+The pipeline runner uses this order to decide execution sequence for "start all".
+
+### Step Input Sources (User-Controlled Switch)
+
+Background step supports choosing the person image source via `projects.background_person_source`:
+
+- `try_on_result`: use `try_on_result_id` as source (typical when try-on runs before background)
+- `model_image`: use `model_image_id` as source (allows background to run independently or before try-on)
+
+The unified workflow UI exposes this as a toggle in the Background section.
+
+### Workflow Toggles (Decoupled Modules)
+
+Projects have 3 feature flags:
+- `enable_try_on`
+- `enable_background`
+- `enable_video`
+
+When a flag is disabled, the backend rejects creating that task type for the project.
+
+### Result Naming + Download
+
+Generated results are named as:
+- `<project_name>_<workflow>_<YYYYMMDD_HHMMSS>.<ext>` (server local time)
+
+To ensure the browser downloads with that filename (even when the file is hosted on an external CDN),
+use the authenticated download endpoint:
+- `GET /api/assets/{asset_id}/download`
+
+Note: because auth is Bearer-token based (localStorage), frontend downloads should use `fetch` with the
+Authorization header (not `window.open`).
+
+### 7-Day Retention (Hard Delete)
+
+Workflow result assets older than 7 days are deleted. This also clears any project result pointers
+via FK `ON DELETE SET NULL`.
+
+Implementation:
+- Celery beat schedule runs `app.tasks.maintenance.cleanup_expired_results` hourly (see `backend/app/tasks/celery_app.py`)
+- Docker Compose includes a `celery-beat` service (see `docker-compose.yml`)
+
+### Results Library (Last 7 Days)
+
+Frontend page `/results` shows all generated result assets from the last 7 days (cross-project), using:
+- `GET /api/assets?asset_type=try_on_result&asset_type=background_result&asset_type=video_result&days=7`
+
+### Recent Assets De-duplication
+
+To avoid showing the same material multiple times in the "last 7 days" pickers, uploads compute a SHA-256 hash and store it in:
+- `assets.content_hash`
+
+Frontend de-dupes recent assets by `content_hash` (fallback: URL / filename+size).
+
 ### Task Processing Flow
 
 任务处理流程 (`backend/app/api/tasks.py:submit_and_poll_task`):
@@ -224,6 +291,12 @@ Each step creates a Task that is processed asynchronously.
    - 更新 Project 的结果字段（`try_on_result_id`, `background_result_id`, `video_result_id`）
 
 > **注意**: 当前使用 FastAPI BackgroundTasks 处理。生产环境可切换为 Celery。
+
+### Pipeline Runner Note (Cross-Session Staleness)
+
+The pipeline runner and `submit_and_poll_task` use different SQLAlchemy sessions. Because the app uses
+`expire_on_commit=False`, a pipeline session can otherwise keep a stale `Project` instance and miss updated
+result IDs (e.g. `try_on_result_id`). To prevent this, pipeline loads `Project` with `populate_existing=True`.
 
 ### 前端任务状态管理
 
@@ -406,6 +479,16 @@ Each module can be accessed directly:
 - Navigation to next module after completion
 
 ## Development Notes
+
+- Workflow v2 (sequential pipeline) lives in `frontend/src/app/workflow/page.tsx`
+- Pipeline endpoints:
+  - `POST /api/projects/{id}/pipeline/start?start_step=try_on|background&chain=true|false`
+  - `POST /api/projects/{id}/pipeline/cancel` (no RunningHub cancel; only prevents starting the next step)
+- Pipeline state fields are stored on `projects.*`:
+  - `pipeline_active`, `pipeline_cancel_requested`, `pipeline_chain`
+  - `pipeline_start_step`, `pipeline_current_step`
+  - `pipeline_last_error`, `pipeline_started_at`, `pipeline_updated_at`
+- Task timeout: each step is polled up to 1 hour; on timeout task is marked failed with `Timeout failed (1h)`
 
 - All database operations use async SQLAlchemy
 - Task status is polled via SWR with automatic refresh

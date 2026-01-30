@@ -70,7 +70,3 @@ export function useTaskPolling(
     refresh: mutate,
   };
 }
-
-export function useMultipleTaskPolling(taskIds: number[]) {
-  return taskIds.map((id) => useTaskPolling(id));
-}

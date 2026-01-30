@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Plus, Trash2, Loader2, FolderOpen, Wand2, Layers, Video } from "lucide-react";
+import { Plus, Trash2, Loader2, FolderOpen, Wand2, Layers, Video, GripVertical } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -20,6 +20,28 @@ function DashboardContent() {
   const [newProjectName, setNewProjectName] = useState("");
   const [isCreating, setIsCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
+  const [enableTryOn, setEnableTryOn] = useState(true);
+  const [enableBackground, setEnableBackground] = useState(true);
+  const [enableVideo, setEnableVideo] = useState(true);
+  type StepKey = "try_on" | "background" | "video";
+  const baseOrder: StepKey[] = ["try_on", "background", "video"];
+  const [workflowOrder, setWorkflowOrder] = useState<StepKey[]>(baseOrder);
+  const [dragging, setDragging] = useState<StepKey | null>(null);
+
+  const enabledMap: Record<StepKey, boolean> = {
+    try_on: enableTryOn,
+    background: enableBackground,
+    video: enableVideo,
+  };
+  const selectedOrder = workflowOrder.filter((s) => enabledMap[s]);
+
+  const insertByDefaultOrder = (prev: StepKey[], step: StepKey): StepKey[] => {
+    if (prev.includes(step)) return prev;
+    const after = baseOrder.slice(baseOrder.indexOf(step) + 1);
+    const idx = prev.findIndex((s) => after.includes(s));
+    if (idx === -1) return [...prev, step];
+    return [...prev.slice(0, idx), step, ...prev.slice(idx)];
+  };
 
   const handleCreateProject = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -29,7 +51,12 @@ function DashboardContent() {
     setCreateError(null);
 
     try {
-      const project = await createProject(newProjectName.trim());
+      const project = await createProject(newProjectName.trim(), {
+        enable_try_on: enableTryOn,
+        enable_background: enableBackground,
+        enable_video: enableVideo,
+        workflow_steps: selectedOrder,
+      });
       setNewProjectName("");
       router.push(`/workflow?project=${project.id}`);
     } catch (err) {
@@ -87,7 +114,14 @@ function DashboardContent() {
                 disabled={isCreating}
                 className="flex-1"
               />
-              <Button type="submit" disabled={isCreating || !newProjectName.trim()}>
+              <Button
+                type="submit"
+                disabled={
+                  isCreating ||
+                  !newProjectName.trim() ||
+                  (!enableTryOn && !enableBackground && !enableVideo)
+                }
+              >
                 {isCreating ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
@@ -98,6 +132,109 @@ function DashboardContent() {
                 )}
               </Button>
             </form>
+            <div className="mt-3 flex flex-wrap gap-4 text-sm">
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={enableTryOn}
+                  onChange={(e) => {
+                    const checked = e.target.checked;
+                    setEnableTryOn(checked);
+                    setWorkflowOrder((prev) =>
+                      checked ? insertByDefaultOrder(prev, "try_on") : prev.filter((s) => s !== "try_on")
+                    );
+                  }}
+                  disabled={isCreating}
+                />
+                {t.workflow.steps.tryOn}
+              </label>
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={enableBackground}
+                  onChange={(e) => {
+                    const checked = e.target.checked;
+                    setEnableBackground(checked);
+                    setWorkflowOrder((prev) =>
+                      checked
+                        ? insertByDefaultOrder(prev, "background")
+                        : prev.filter((s) => s !== "background")
+                    );
+                  }}
+                  disabled={isCreating}
+                />
+                {t.workflow.steps.background}
+              </label>
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={enableVideo}
+                  onChange={(e) => {
+                    const checked = e.target.checked;
+                    setEnableVideo(checked);
+                    setWorkflowOrder((prev) =>
+                      checked ? insertByDefaultOrder(prev, "video") : prev.filter((s) => s !== "video")
+                    );
+                  }}
+                  disabled={isCreating}
+                />
+                {t.workflow.steps.video}
+              </label>
+            </div>
+
+            {selectedOrder.length >= 2 && (
+              <div className="mt-4 rounded-lg border bg-muted/30 p-3">
+                <div className="text-sm font-medium">流程顺序</div>
+                <div className="text-xs text-muted-foreground mt-1">
+                  拖拽调整执行顺序（将影响“全部启动”的执行先后）。
+                </div>
+                <div className="mt-3 space-y-2">
+                  {selectedOrder.map((step) => {
+                    const label =
+                      step === "try_on"
+                        ? t.workflow.steps.tryOn
+                        : step === "background"
+                          ? t.workflow.steps.background
+                          : t.workflow.steps.video;
+                    return (
+                      <div
+                        key={step}
+                        draggable={!isCreating}
+                        onDragStart={() => setDragging(step)}
+                        onDragEnd={() => setDragging(null)}
+                        onDragOver={(e) => {
+                          e.preventDefault();
+                        }}
+                        onDrop={() => {
+                          if (!dragging || dragging === step) return;
+                          setWorkflowOrder((prev) => {
+                            const cur = prev.filter((s) => enabledMap[s]);
+                            const from = cur.indexOf(dragging);
+                            const to = cur.indexOf(step);
+                            if (from === -1 || to === -1) return prev;
+                            const next = cur.slice();
+                            next.splice(from, 1);
+                            next.splice(to, 0, dragging);
+                            return next;
+                          });
+                          setDragging(null);
+                        }}
+                        className="flex items-center justify-between rounded-md border bg-background px-3 py-2 text-sm"
+                      >
+                        <div className="flex items-center gap-2">
+                          <GripVertical className="h-4 w-4 text-muted-foreground" />
+                          <span>{label}</span>
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                          {dragging === step ? "拖拽中…" : ""}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             {createError && (
               <p className="text-sm text-destructive mt-2">{createError}</p>
             )}
@@ -114,7 +251,7 @@ function DashboardContent() {
             </div>
           ) : error ? (
             <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-4 text-destructive">
-              {t.errors.networkError}
+              {getErrorMessage(error) || t.errors.networkError}
             </div>
           ) : projects.length === 0 ? (
             <div className="rounded-lg border border-dashed p-12 text-center">
@@ -172,6 +309,7 @@ function DashboardContent() {
                         size="sm"
                         className="flex-1"
                         onClick={() => router.push(`/modules/try-on?project=${project.id}`)}
+                        disabled={!project.enable_try_on}
                       >
                         <Wand2 className="h-3 w-3 mr-1" />
                         {t.workflow.steps.tryOn}
@@ -181,7 +319,7 @@ function DashboardContent() {
                         size="sm"
                         className="flex-1"
                         onClick={() => router.push(`/modules/background?project=${project.id}`)}
-                        disabled={!project.try_on_result}
+                        disabled={!project.enable_background}
                       >
                         <Layers className="h-3 w-3 mr-1" />
                         {t.workflow.steps.background}
@@ -191,7 +329,7 @@ function DashboardContent() {
                         size="sm"
                         className="flex-1"
                         onClick={() => router.push(`/modules/video?project=${project.id}`)}
-                        disabled={!project.try_on_result && !project.background_result}
+                        disabled={!project.enable_video}
                       >
                         <Video className="h-3 w-3 mr-1" />
                         {t.workflow.steps.video}

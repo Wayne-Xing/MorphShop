@@ -10,7 +10,7 @@ celery_app = Celery(
     "morphshop",
     broker=settings.redis_url,
     backend=settings.redis_url,
-    include=["app.tasks.ai_tasks"],
+    include=["app.tasks.ai_tasks", "app.tasks.maintenance"],
 )
 
 # Celery configuration
@@ -36,5 +36,12 @@ celery_app.conf.update(
     result_expires=3600,  # 1 hour
 
     # Beat scheduler (if needed later)
-    beat_schedule={},
+    beat_schedule={
+        # Run hourly to enforce 7-day retention even if the container restarts.
+        "cleanup-expired-results-hourly": {
+            "task": "app.tasks.maintenance.cleanup_expired_results",
+            "schedule": 60 * 60,
+            "args": (7,),
+        }
+    },
 )

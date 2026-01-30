@@ -1,4 +1,6 @@
 """File upload API routes."""
+import hashlib
+
 from fastapi import APIRouter, HTTPException, status, UploadFile, File, Form, Request
 
 from app.api.deps import DbSession, CurrentUser
@@ -36,6 +38,7 @@ async def upload_image(
 
     # Read file content
     content = await file.read()
+    content_hash = hashlib.sha256(content).hexdigest()
 
     # Check file size
     if len(content) > settings.max_upload_size:
@@ -58,6 +61,7 @@ async def upload_image(
         original_filename=file.filename or "image.jpg",
         file_path=relative_path,
         file_url=storage.get_file_url(relative_path),
+        content_hash=content_hash,
         asset_type=asset_type,
         mime_type=file.content_type or "image/jpeg",
         file_size=len(content),
@@ -69,8 +73,10 @@ async def upload_image(
     return AssetUploadResponse(
         id=asset.id,
         file_url=asset.file_url,
+        content_hash=asset.content_hash,
         original_filename=asset.original_filename,
         asset_type=asset.asset_type,
+        display_name=asset.display_name,
     )
 
 
@@ -117,8 +123,9 @@ async def delete_asset(
             detail="Asset not found",
         )
 
-    # Delete file from storage
-    await storage.delete_file(asset.file_path)
+    # Delete local file from storage (result assets may be externally hosted).
+    if not (asset.file_path.startswith("http://") or asset.file_path.startswith("https://")):
+        await storage.delete_file(asset.file_path)
 
     # Delete database record
     await db.delete(asset)

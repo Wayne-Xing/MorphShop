@@ -62,3 +62,6 @@ celerybeat.pid
 *.bak
 *.tmp
 *.temp
+
+# Windows reserved file name accidentally created by some tools
+nul

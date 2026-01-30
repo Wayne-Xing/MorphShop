@@ -83,6 +83,29 @@ services:
         condition: service_healthy
     command: celery -A app.tasks.celery_app worker --loglevel=info
 
+  # Celery Beat (scheduled jobs like retention cleanup)
+  celery-beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: morphshop-celery-beat
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://morphshop:morphshop@db:5432/morphshop
+      - REDIS_URL=redis://redis:6379/0
+      - RUNNINGHUB_API_KEY=${RUNNINGHUB_API_KEY:-}
+      - RUNNINGHUB_TRY_ON_APP_ID=${RUNNINGHUB_TRY_ON_APP_ID:-}
+      - RUNNINGHUB_BACKGROUND_APP_ID=${RUNNINGHUB_BACKGROUND_APP_ID:-}
+      - RUNNINGHUB_VIDEO_APP_ID=${RUNNINGHUB_VIDEO_APP_ID:-}
+    volumes:
+      - ./backend:/app
+      - uploads_data:/app/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: celery -A app.tasks.celery_app beat --loglevel=info
+
   # Next.js Frontend
   frontend:
     build:
@@ -94,7 +117,7 @@ services:
     depends_on:
       - backend
     environment:
-      - NEXT_PUBLIC_API_URL=http://localhost:8000
+      - INTERNAL_API_URL=http://backend:8000
 
 volumes:
   postgres_data:
