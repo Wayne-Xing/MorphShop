@@ -1,0 +1,46 @@
+#!/bin/sh
+# Git Pre-commit Hook - 敏感信息检测
+# 在提交前检查暂存的文件中是否包含敏感信息
+#
+# 安装方法: git config core.hooksPath .githooks
+
+echo "Running pre-commit secret detection..."
+
+# 检查暂存的文件内容
+PATTERNS="api[_-]?key\s*[:=]\s*['\"]?[a-zA-Z0-9_-]{20,}|secret[_-]?key\s*[:=]\s*['\"]?[a-zA-Z0-9_-]{16,}|password\s*[:=]\s*['\"][^'\"]{8,}['\"]|['\"][a-f0-9]{32}['\"]"
+
+# 排除的文件
+EXCLUDED="\.env\.example|check-secrets\.py|pre-commit|\.md$"
+
+# 获取暂存的文件
+FILES=$(git diff --cached --name-only --diff-filter=ACM)
+
+if [ -z "$FILES" ]; then
+    exit 0
+fi
+
+FOUND=0
+
+for FILE in $FILES; do
+    # 跳过排除的文件
+    if echo "$FILE" | grep -qE "$EXCLUDED"; then
+        continue
+    fi
+
+    # 检查文件内容
+    if git diff --cached "$FILE" | grep -iE "$PATTERNS" | grep -v "environ\|getenv\|os\.environ" > /dev/null 2>&1; then
+        echo "[BLOCKED] 检测到敏感信息: $FILE"
+        git diff --cached "$FILE" | grep -inE "$PATTERNS" | grep -v "environ\|getenv" | head -3
+        FOUND=1
+    fi
+done
+
+if [ $FOUND -eq 1 ]; then
+    echo ""
+    echo "提交被阻止！请移除硬编码的敏感信息，使用环境变量代替。"
+    echo "如需跳过检查，使用: git commit --no-verify"
+    exit 1
+fi
+
+echo "Secret check passed."
+exit 0
