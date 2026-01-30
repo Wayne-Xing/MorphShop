@@ -16,6 +16,7 @@ python test_runninghub.py
 """
 import asyncio
 import sys
+import os
 import httpx
 import json
 from pathlib import Path
@@ -24,7 +25,7 @@ from pathlib import Path
 # 配置区域 - 请根据你的RunningHub工作流修改这些值
 # =====================================================
 
-API_KEY = "deba809205344530a67591bf97958da4"
+API_KEY = os.environ.get("RUNNINGHUB_API_KEY", "")  # 从环境变量读取
 BASE_URL = "https://www.runninghub.cn"
 TRY_ON_APP_ID = "2016740236478386178"
 
