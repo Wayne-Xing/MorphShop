@@ -68,10 +68,12 @@ export function useProject(id: number | null) {
       enable_video: boolean;
       workflow_steps: Array<"try_on" | "background" | "video">;
       background_person_source: "try_on_result" | "model_image";
-      model_image_id: number;
-      clothing_image_id: number;
-      background_image_id: number;
-      reference_video_id: number;
+      try_on_person_source: "upstream" | "model_image";
+      video_person_source: "upstream" | "model_image";
+      model_image_id: number | null;
+      clothing_image_id: number | null;
+      background_image_id: number | null;
+      reference_video_id: number | null;
     }>
   ) => {
     if (!id) return;

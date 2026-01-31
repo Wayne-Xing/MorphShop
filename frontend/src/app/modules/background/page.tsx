@@ -311,11 +311,18 @@ function BackgroundContent() {
               {project?.background_result && !currentTask && (
                 <div className="rounded-lg border p-4 bg-muted/50">
                   <p className="text-sm font-medium mb-2">{t.background.result}</p>
-                  <img
-                    src={project.background_result.file_url}
-                    alt={t.background.result}
-                    className="w-full max-w-sm mx-auto object-contain rounded"
-                  />
+                  <a
+                    href={project.background_result.file_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="block"
+                  >
+                    <img
+                      src={project.background_result.file_url}
+                      alt={t.background.result}
+                      className="w-full max-w-sm max-h-80 mx-auto object-contain rounded"
+                    />
+                  </a>
                   <div className="mt-4 flex gap-2 justify-center">
                     <Button
                       variant="outline"
@@ -337,6 +344,15 @@ function BackgroundContent() {
                       }}
                     >
                       {t.common.download}
+                    </Button>
+                    <Button variant="secondary" size="sm" asChild>
+                      <a
+                        href={project.background_result.file_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        查看原图
+                      </a>
                     </Button>
                     <Button
                       size="sm"

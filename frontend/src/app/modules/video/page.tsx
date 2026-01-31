@@ -308,7 +308,7 @@ function VideoContent() {
                   <video
                     src={project.video_result.file_url}
                     controls
-                    className="w-full max-w-sm mx-auto rounded"
+                    className="w-full max-w-sm max-h-80 mx-auto object-contain rounded"
                   />
                   <div className="mt-4 flex gap-2 justify-center">
                     <Button
@@ -332,6 +332,15 @@ function VideoContent() {
                     >
                       <Download className="h-4 w-4 mr-2" />
                       {t.common.download}
+                    </Button>
+                    <Button variant="secondary" size="sm" asChild>
+                      <a
+                        href={project.video_result.file_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        查看原视频
+                      </a>
                     </Button>
                   </div>
                 </div>

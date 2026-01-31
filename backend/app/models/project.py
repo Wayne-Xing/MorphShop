@@ -53,6 +53,11 @@ class Project(Base):
     # - "try_on_result": use try-on output image as the person image for background step
     # - "model_image": use the project's model_image as the person image for background step
     background_person_source: Mapped[str] = mapped_column(String(30), default="try_on_result")
+    # try_on_person_source / video_person_source:
+    # - "upstream": use upstream result if available
+    # - "model_image": use the project's model_image as the person image
+    try_on_person_source: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    video_person_source: Mapped[str | None] = mapped_column(String(30), nullable=True)
 
     # Asset references
     model_image_id: Mapped[int | None] = mapped_column(

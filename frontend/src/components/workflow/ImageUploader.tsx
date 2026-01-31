@@ -13,6 +13,7 @@ interface ImageUploaderProps {
   value?: { id: number; url: string; filename: string } | null;
   onChange: (file: File | null) => void;
   onUploadComplete?: (asset: { id: number; url: string; filename: string }) => void;
+  onClearValue?: () => void;
   isUploading?: boolean;
   error?: string;
   accept?: string;
@@ -26,6 +27,7 @@ export function ImageUploader({
   value,
   onChange,
   onUploadComplete,
+  onClearValue,
   isUploading = false,
   error,
   accept = "image/jpeg,image/png,image/webp",
@@ -114,8 +116,9 @@ export function ImageUploader({
 
   const handleRemove = useCallback(() => {
     onChange(null);
+    onClearValue?.();
     setLocalError(null);
-  }, [onChange]);
+  }, [onChange, onClearValue]);
 
   const displayError = error || localError;
 

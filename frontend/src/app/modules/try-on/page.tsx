@@ -245,6 +245,18 @@ function TryOnContent() {
                   filename: project.model_image.original_filename,
                 } : null}
                 onChange={setModelFile}
+                onClearValue={() => {
+                  if (!project) return;
+                  void updateProject({ model_image_id: null })
+                    .then(() => setModelFile(null))
+                    .catch((err) => {
+                      toast({
+                        title: t.errors.uploadFailed,
+                        description: getErrorMessage(err),
+                        variant: "destructive",
+                      });
+                    });
+                }}
                 isUploading={isUploading}
               />
 
@@ -292,6 +304,18 @@ function TryOnContent() {
                   filename: project.clothing_image.original_filename,
                 } : null}
                 onChange={setClothingFile}
+                onClearValue={() => {
+                  if (!project) return;
+                  void updateProject({ clothing_image_id: null })
+                    .then(() => setClothingFile(null))
+                    .catch((err) => {
+                      toast({
+                        title: t.errors.uploadFailed,
+                        description: getErrorMessage(err),
+                        variant: "destructive",
+                      });
+                    });
+                }}
                 isUploading={isUploading}
               />
 
@@ -367,11 +391,18 @@ function TryOnContent() {
               {project?.try_on_result && !currentTask && (
                 <div className="rounded-lg border p-4 bg-muted/50">
                   <p className="text-sm font-medium mb-2">{t.tryOn.result}</p>
-                  <img
-                    src={project.try_on_result.file_url}
-                    alt={t.tryOn.result}
-                    className="w-full max-w-sm mx-auto object-contain rounded"
-                  />
+                  <a
+                    href={project.try_on_result.file_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="block"
+                  >
+                    <img
+                      src={project.try_on_result.file_url}
+                      alt={t.tryOn.result}
+                      className="w-full max-w-sm max-h-80 mx-auto object-contain rounded"
+                    />
+                  </a>
                   <div className="mt-4 flex gap-2 justify-center">
                     <Button
                       variant="outline"
@@ -393,6 +424,15 @@ function TryOnContent() {
                       }}
                     >
                       {t.common.download}
+                    </Button>
+                    <Button variant="secondary" size="sm" asChild>
+                      <a
+                        href={project.try_on_result.file_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        查看原图
+                      </a>
                     </Button>
                     <Button
                       size="sm"

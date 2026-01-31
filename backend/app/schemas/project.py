@@ -15,6 +15,8 @@ class ProjectCreate(BaseModel):
     enable_video: bool = True
     workflow_steps: list[str] | None = None
     background_person_source: str | None = None
+    try_on_person_source: str | None = None
+    video_person_source: str | None = None
 
 
 class ProjectUpdate(BaseModel):
@@ -25,6 +27,8 @@ class ProjectUpdate(BaseModel):
     enable_video: bool | None = None
     workflow_steps: list[str] | None = None
     background_person_source: str | None = None
+    try_on_person_source: str | None = None
+    video_person_source: str | None = None
     model_image_id: int | None = None
     clothing_image_id: int | None = None
     background_image_id: int | None = None
@@ -51,6 +55,8 @@ class ProjectResponse(BaseModel):
     enable_video: bool
     workflow_steps: list[str] | None = None
     background_person_source: str | None = None
+    try_on_person_source: str | None = None
+    video_person_source: str | None = None
 
     model_image: AssetBrief | None = None
     clothing_image: AssetBrief | None = None

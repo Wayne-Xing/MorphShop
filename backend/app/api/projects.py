@@ -20,6 +20,32 @@ from app.schemas.project import (
 router = APIRouter()
 
 _BASE_STEP_ORDER = ["try_on", "background", "video"]
+_STEP_OUTPUT_TYPE = {
+    "try_on": "image",
+    "background": "image",
+    "video": "video",
+}
+_STEP_PERSON_INPUT_TYPE = {
+    "try_on": "image",
+    "background": "image",
+    "video": "image",
+}
+_STEP_RESULT_ATTR = {
+    "try_on": "try_on_result_id",
+    "background": "background_result_id",
+    "video": "video_result_id",
+}
+
+
+def _normalize_person_source(value: str | None) -> str | None:
+    if value is None:
+        return None
+    v = value.strip().lower()
+    if not v:
+        return None
+    if v in ("upstream", "model_image"):
+        return v
+    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid person source mode.")
 
 
 def _parse_steps(value: str | None) -> list[str] | None:
@@ -69,12 +95,60 @@ def _steps_for_project(p: Project) -> list[str]:
     return out
 
 
-def _background_source_id(p: Project) -> int | None:
-    # Default behavior (backward compatible): if try-on is enabled, use its result by default.
-    mode = (getattr(p, "background_person_source", None) or "try_on_result").lower()
-    if mode == "model_image" or not p.enable_try_on:
+def _result_id_for_step(p: Project, step: str) -> int | None:
+    attr = _STEP_RESULT_ATTR.get(step)
+    if not attr:
+        return None
+    return getattr(p, attr, None)
+
+
+def _find_upstream_result_id(p: Project, steps: list[str], step: str) -> int | None:
+    input_type = _STEP_PERSON_INPUT_TYPE.get(step)
+    if not input_type or step not in steps:
+        return None
+    idx = steps.index(step)
+    for prev in reversed(steps[:idx]):
+        if _STEP_OUTPUT_TYPE.get(prev) != input_type:
+            continue
+        result_id = _result_id_for_step(p, prev)
+        if result_id:
+            return result_id
+    return None
+
+
+def _has_upstream_step(steps: list[str], step: str) -> bool:
+    input_type = _STEP_PERSON_INPUT_TYPE.get(step)
+    if not input_type or step not in steps:
+        return False
+    idx = steps.index(step)
+    for prev in reversed(steps[:idx]):
+        if _STEP_OUTPUT_TYPE.get(prev) == input_type:
+            return True
+    return False
+
+
+def _resolve_person_source_id(p: Project, steps: list[str], step: str) -> int | None:
+    """Resolve the person image source for a step based on user preference."""
+    upstream_id = _find_upstream_result_id(p, steps, step)
+    has_upstream = _has_upstream_step(steps, step)
+
+    if step == "background":
+        raw = (getattr(p, "background_person_source", None) or "try_on_result").lower()
+        mode = "model_image" if raw == "model_image" else "upstream"
+    elif step == "try_on":
+        mode = _normalize_person_source(getattr(p, "try_on_person_source", None) or None)
+    elif step == "video":
+        mode = _normalize_person_source(getattr(p, "video_person_source", None) or None)
+    else:
+        mode = None
+
+    if mode == "model_image":
         return p.model_image_id
-    return p.try_on_result_id
+    if mode == "upstream":
+        return upstream_id if has_upstream else p.model_image_id
+
+    # Auto (unset): prefer upstream when available, else fallback to model image.
+    return upstream_id or p.model_image_id
 
 
 @router.get("", response_model=ProjectListResponse)
@@ -161,6 +235,9 @@ async def create_project(
     if bg_src not in ("try_on_result", "model_image"):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid background_person_source.")
 
+    try_on_src = _normalize_person_source(project_data.try_on_person_source)
+    video_src = _normalize_person_source(project_data.video_person_source)
+
     project = Project(
         user_id=current_user.id,
         name=project_data.name,
@@ -170,6 +247,8 @@ async def create_project(
         enable_video=project_data.enable_video,
         workflow_steps=json.dumps(steps),
         background_person_source=bg_src,
+        try_on_person_source=try_on_src,
+        video_person_source=video_src,
     )
     db.add(project)
     await db.flush()
@@ -292,6 +371,10 @@ async def update_project(
         if bg_src not in ("try_on_result", "model_image"):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid background_person_source.")
         project.background_person_source = bg_src
+    if update_data.try_on_person_source is not None:
+        project.try_on_person_source = _normalize_person_source(update_data.try_on_person_source)
+    if update_data.video_person_source is not None:
+        project.video_person_source = _normalize_person_source(update_data.video_person_source)
 
     if update_data.workflow_steps is not None:
         enabled = {
@@ -317,13 +400,13 @@ async def update_project(
     # If try-on is disabled, background can't use try-on result as its source.
     if not project.enable_try_on and (project.background_person_source or "").lower() == "try_on_result":
         project.background_person_source = "model_image"
-    if update_data.model_image_id is not None:
+    if "model_image_id" in update_data.model_fields_set:
         project.model_image_id = update_data.model_image_id
-    if update_data.clothing_image_id is not None:
+    if "clothing_image_id" in update_data.model_fields_set:
         project.clothing_image_id = update_data.clothing_image_id
-    if update_data.background_image_id is not None:
+    if "background_image_id" in update_data.model_fields_set:
         project.background_image_id = update_data.background_image_id
-    if update_data.reference_video_id is not None:
+    if "reference_video_id" in update_data.model_fields_set:
         project.reference_video_id = update_data.reference_video_id
 
     await db.flush()
@@ -408,9 +491,10 @@ async def _run_project_pipeline(project_id: int) -> None:
 
                 # Create the task for this step using current project inputs/results.
                 if step == "try_on":
-                    if not project.model_image_id or not project.clothing_image_id:
-                        raise ValueError("Missing required assets: model_image and clothing_image")
-                    model = await db.get(Asset, project.model_image_id)
+                    source_id = _resolve_person_source_id(project, steps, "try_on")
+                    if not source_id or not project.clothing_image_id:
+                        raise ValueError("Missing required assets: model_image (or upstream result) and clothing_image")
+                    model = await db.get(Asset, source_id)
                     clothing = await db.get(Asset, project.clothing_image_id)
                     if not model or not clothing:
                         raise ValueError("Asset not found")
@@ -420,7 +504,7 @@ async def _run_project_pipeline(project_id: int) -> None:
                     await submit_and_poll_task(task.id, "try_on")
 
                 elif step == "background":
-                    source_id = _background_source_id(project)
+                    source_id = _resolve_person_source_id(project, steps, "background")
                     if not source_id:
                         raise ValueError(
                             "Missing required asset for background: person image (try-on result or model image)"
@@ -504,13 +588,14 @@ async def start_pipeline(
     if step == "video":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Video module is not integrated yet.")
     if step == "try_on":
-        if not project.model_image_id or not project.clothing_image_id:
+        source_id = _resolve_person_source_id(project, steps, "try_on")
+        if not source_id or not project.clothing_image_id:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Missing required assets for try-on: model_image and clothing_image",
+                detail="Missing required assets for try-on: model_image (or upstream result) and clothing_image",
             )
     if step == "background":
-        source_id = _background_source_id(project)
+        source_id = _resolve_person_source_id(project, steps, "background")
         if not source_id:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,

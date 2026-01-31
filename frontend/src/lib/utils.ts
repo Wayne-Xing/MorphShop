@@ -44,10 +44,9 @@ export function dedupeAssets<T extends { content_hash?: string | null; file_url?
   const seen = new Set<string>();
   const out: T[] = [];
   for (const a of assets) {
-    const key =
-      a.content_hash ??
-      a.file_url ??
-      `${a.original_filename ?? ""}:${a.file_size ?? 0}`;
+    const hasNameOrSize = Boolean(a.original_filename) || typeof a.file_size === "number";
+    const nameKey = `${a.original_filename ?? ""}:${a.file_size ?? 0}`;
+    const key = a.content_hash ?? (hasNameOrSize ? nameKey : a.file_url ?? "");
     if (seen.has(key)) continue;
     seen.add(key);
     out.push(a);

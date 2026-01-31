@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import useSWR from "swr";
 import {
@@ -28,6 +28,16 @@ import { dedupeAssets, getErrorMessage, triggerBrowserDownload } from "@/lib/uti
 
 type StepKey = "try_on" | "background" | "video";
 const BASE_STEP_ORDER: StepKey[] = ["try_on", "background", "video"];
+const STEP_OUTPUT_TYPE: Record<StepKey, "image" | "video"> = {
+  try_on: "image",
+  background: "image",
+  video: "video",
+};
+const STEP_PERSON_INPUT_TYPE: Record<StepKey, "image"> = {
+  try_on: "image",
+  background: "image",
+  video: "image",
+};
 
 function AssetPreview({
   label,
@@ -51,7 +61,7 @@ function AssetPreview({
           <img
             src={asset.file_url}
             alt={asset.display_name ?? asset.original_filename}
-            className="h-44 w-full object-contain"
+            className="h-56 w-full object-contain"
           />
         </div>
       ) : (
@@ -71,14 +81,16 @@ function RecentAssetPicker({
   onPick: (assetId: number) => void;
 }) {
   if (!assets?.length) return null;
-  const unique = dedupeAssets(assets);
+  const unique = dedupeAssets(assets).filter((a) => a.mime_type?.startsWith("image/"));
+  const thumbs = unique.slice(0, 8);
+  const placeholders = Math.max(0, 8 - thumbs.length);
   return (
     <div className="rounded-lg border p-3">
       <div className="text-xs text-muted-foreground mb-2">
         最近 7 天素材（点击选择）
       </div>
-      <div className="grid grid-cols-4 gap-2">
-        {unique.slice(0, 8).map((a) => (
+      <div className="grid grid-cols-4 grid-rows-2 gap-2">
+        {thumbs.map((a) => (
           <button
             key={a.id}
             type="button"
@@ -89,6 +101,12 @@ function RecentAssetPicker({
             <img src={a.file_url} alt={a.original_filename} className="h-full w-full object-cover" />
             <div className="pointer-events-none absolute inset-0 bg-black/0 group-hover:bg-black/10" />
           </button>
+        ))}
+        {Array.from({ length: placeholders }).map((_, idx) => (
+          <div
+            key={`empty-${idx}`}
+            className="aspect-square rounded-md border border-dashed bg-muted/30"
+          />
         ))}
       </div>
     </div>
@@ -165,6 +183,90 @@ function WorkflowPageInner() {
     // hasActiveTask covers RunningHub polling; pipeline_active covers the tiny gaps between steps.
     return hasActiveTask || !!project.pipeline_active;
   }, [hasActiveTask, project]);
+  const prevBusyRef = useRef(false);
+  const leftCardRefs = useRef<Record<StepKey, HTMLDivElement | null>>({
+    try_on: null,
+    background: null,
+    video: null,
+  });
+  const rightCardRefs = useRef<Record<StepKey, HTMLDivElement | null>>({
+    try_on: null,
+    background: null,
+    video: null,
+  });
+  const resizeObserversRef = useRef<Record<StepKey, ResizeObserver | null>>({
+    try_on: null,
+    background: null,
+    video: null,
+  });
+
+  useEffect(() => {
+    if (!project?.id || !isBusy) return;
+    const id = setInterval(() => {
+      refreshProject();
+      refreshTasks();
+    }, 2000);
+    return () => clearInterval(id);
+  }, [isBusy, project?.id, refreshProject, refreshTasks]);
+
+  useEffect(() => {
+    if (prevBusyRef.current && !isBusy) {
+      refreshProject();
+      refreshTasks();
+    }
+    prevBusyRef.current = isBusy;
+  }, [isBusy, refreshProject, refreshTasks]);
+
+  const syncCardHeight = useCallback((step: StepKey) => {
+    const left = leftCardRefs.current[step];
+    const right = rightCardRefs.current[step];
+    if (!left || !right) return;
+    const height = left.getBoundingClientRect().height;
+    if (!height) return;
+    right.style.height = `${height}px`;
+  }, []);
+
+  useEffect(() => {
+    if (typeof ResizeObserver === "undefined") {
+      enabledSteps.forEach((step) => syncCardHeight(step));
+      return;
+    }
+
+    (Object.values(resizeObserversRef.current) ?? []).forEach((obs) => obs?.disconnect());
+    resizeObserversRef.current = {
+      try_on: null,
+      background: null,
+      video: null,
+    };
+
+    enabledSteps.forEach((step) => {
+      const left = leftCardRefs.current[step];
+      if (!left) return;
+      const obs = new ResizeObserver(() => syncCardHeight(step));
+      obs.observe(left);
+      resizeObserversRef.current[step] = obs;
+      syncCardHeight(step);
+    });
+
+    return () => {
+      (Object.values(resizeObserversRef.current) ?? []).forEach((obs) => obs?.disconnect());
+    };
+  }, [enabledSteps, syncCardHeight]);
+
+  const stepLabel: Record<StepKey, string> = useMemo(() => {
+    if (locale === "zh") {
+      return {
+        try_on: "换装",
+        background: "换背景",
+        video: "视频",
+      };
+    }
+    return {
+      try_on: "Try-on",
+      background: "Background",
+      video: "Video",
+    };
+  }, [locale]);
 
   const latestByType = useMemo(() => {
     const m: Partial<Record<StepKey, Task>> = {};
@@ -175,9 +277,23 @@ function WorkflowPageInner() {
     return m;
   }, [tasks]);
 
+  const stepResult = useMemo<Record<StepKey, AssetBrief | null | undefined>>(
+    () => ({
+      try_on: project?.try_on_result,
+      background: project?.background_result,
+      video: project?.video_result,
+    }),
+    [project?.try_on_result, project?.background_result, project?.video_result]
+  );
+
   const [modelFile, setModelFile] = useState<File | null>(null);
   const [clothingFile, setClothingFile] = useState<File | null>(null);
   const [backgroundFile, setBackgroundFile] = useState<File | null>(null);
+  const lastUploadKeyRef = useRef<Record<string, string | undefined>>({});
+
+  const getFileKey = useCallback((file: File) => {
+    return `${file.name}:${file.size}:${file.lastModified}`;
+  }, []);
 
   const [uploading, setUploading] = useState<Record<string, boolean>>({});
 
@@ -209,17 +325,35 @@ function WorkflowPageInner() {
 
   // Auto-upload on file select, but keep local preview while uploading.
   useEffect(() => {
-    if (!modelFile) return;
+    if (!modelFile) {
+      lastUploadKeyRef.current.model_image_id = undefined;
+      return;
+    }
+    const key = getFileKey(modelFile);
+    if (lastUploadKeyRef.current.model_image_id === key) return;
+    lastUploadKeyRef.current.model_image_id = key;
     uploadAndBind(modelFile, "model_image", "model_image_id");
-  }, [modelFile, uploadAndBind]);
+  }, [modelFile, uploadAndBind, getFileKey]);
   useEffect(() => {
-    if (!clothingFile) return;
+    if (!clothingFile) {
+      lastUploadKeyRef.current.clothing_image_id = undefined;
+      return;
+    }
+    const key = getFileKey(clothingFile);
+    if (lastUploadKeyRef.current.clothing_image_id === key) return;
+    lastUploadKeyRef.current.clothing_image_id = key;
     uploadAndBind(clothingFile, "clothing_image", "clothing_image_id");
-  }, [clothingFile, uploadAndBind]);
+  }, [clothingFile, uploadAndBind, getFileKey]);
   useEffect(() => {
-    if (!backgroundFile) return;
+    if (!backgroundFile) {
+      lastUploadKeyRef.current.background_image_id = undefined;
+      return;
+    }
+    const key = getFileKey(backgroundFile);
+    if (lastUploadKeyRef.current.background_image_id === key) return;
+    lastUploadKeyRef.current.background_image_id = key;
     uploadAndBind(backgroundFile, "background_image", "background_image_id");
-  }, [backgroundFile, uploadAndBind]);
+  }, [backgroundFile, uploadAndBind, getFileKey]);
 
   const { data: recentModelAssets } = useSWR<Asset[]>(
     project ? ["assets", "model_image"] : null,
@@ -252,11 +386,109 @@ function WorkflowPageInner() {
     [refreshProject, toast, updateProject]
   );
 
-  const setBackgroundPersonSourceMode = useCallback(
-    async (mode: "try_on_result" | "model_image") => {
+  const clearProjectField = useCallback(
+    async (projectField: "model_image_id" | "clothing_image_id" | "background_image_id") => {
+      try {
+        await updateProject({ [projectField]: null } as any);
+        await refreshProject();
+      } catch (err) {
+        toast({ title: "更新失败", description: getErrorMessage(err), variant: "destructive" });
+      }
+    },
+    [refreshProject, toast, updateProject]
+  );
+
+  const upstreamProviderByStep = useMemo(() => {
+    const out: Record<
+      StepKey,
+      { step: StepKey; asset: AssetBrief | null | undefined } | null
+    > = {
+      try_on: null,
+      background: null,
+      video: null,
+    };
+    enabledSteps.forEach((step, idx) => {
+      const inputType = STEP_PERSON_INPUT_TYPE[step];
+      if (!inputType) return;
+      for (let i = idx - 1; i >= 0; i--) {
+        const prev = enabledSteps[i];
+        if (STEP_OUTPUT_TYPE[prev] !== inputType) continue;
+        out[step] = { step: prev, asset: stepResult[prev] };
+        break;
+      }
+    });
+    return out;
+  }, [enabledSteps, stepResult]);
+
+  const getPersonSourceInfo = useCallback(
+    (step: StepKey) => {
+      const upstream = upstreamProviderByStep[step];
+      if (upstream) {
+        const upstreamLabel = stepLabel[upstream.step];
+        return {
+          hasUpstream: true,
+          upstreamStep: upstream.step,
+          asset: upstream.asset,
+          hint:
+            locale === "zh"
+              ? `来自上游：${upstreamLabel} 输出`
+              : `From upstream ${upstreamLabel} result`,
+          emptyText:
+            locale === "zh"
+              ? `等待${upstreamLabel}结果生成`
+              : `Waiting for ${upstreamLabel} result`,
+        };
+      }
+      return {
+        hasUpstream: false,
+        upstreamStep: null as StepKey | null,
+        asset: project?.model_image ?? null,
+        hint: locale === "zh" ? "来自人物图" : "From model image",
+        emptyText:
+          locale === "zh"
+            ? "请先上传人物图"
+            : "Please upload a model image first",
+      };
+    },
+    [locale, project?.model_image, stepLabel, upstreamProviderByStep]
+  );
+
+  const personSourceModeByStep = useMemo(() => {
+    if (!project) return {} as Record<StepKey, "upstream" | "model_image">;
+    const out = {} as Record<StepKey, "upstream" | "model_image">;
+    enabledSteps.forEach((step) => {
+      const hasUpstream = !!upstreamProviderByStep[step];
+      if (!hasUpstream) {
+        out[step] = "model_image";
+        return;
+      }
+      if (step === "background") {
+        const raw = project.background_person_source ?? "try_on_result";
+        out[step] = raw === "model_image" ? "model_image" : "upstream";
+        return;
+      }
+      if (step === "try_on") {
+        out[step] = project.try_on_person_source === "model_image" ? "model_image" : "upstream";
+        return;
+      }
+      out[step] = project.video_person_source === "model_image" ? "model_image" : "upstream";
+    });
+    return out;
+  }, [enabledSteps, project, upstreamProviderByStep]);
+
+  const setPersonSourceMode = useCallback(
+    async (step: StepKey, mode: "upstream" | "model_image") => {
       if (!project) return;
       try {
-        await updateProject({ background_person_source: mode } as any);
+        if (step === "background") {
+          await updateProject({
+            background_person_source: mode === "upstream" ? "try_on_result" : "model_image",
+          } as any);
+        } else if (step === "try_on") {
+          await updateProject({ try_on_person_source: mode } as any);
+        } else if (step === "video") {
+          await updateProject({ video_person_source: mode } as any);
+        }
         await refreshProject();
       } catch (err) {
         toast({ title: "更新失败", description: getErrorMessage(err), variant: "destructive" });
@@ -265,87 +497,49 @@ function WorkflowPageInner() {
     [project, refreshProject, toast, updateProject]
   );
 
-  const backgroundPersonSourceMode = useMemo<"try_on_result" | "model_image">(() => {
-    if (!project) return "try_on_result";
-    const raw = project.background_person_source ?? (project.enable_try_on ? "try_on_result" : "model_image");
-    return raw === "model_image" ? "model_image" : "try_on_result";
-  }, [project]);
-
-  const backgroundSource = useMemo<AssetBrief | null | undefined>(() => {
-    if (!project) return null;
-    if (!project.enable_try_on) return project.model_image;
-    return backgroundPersonSourceMode === "model_image" ? project.model_image : project.try_on_result;
-  }, [backgroundPersonSourceMode, project]);
-
-  const videoSourceInfo = useMemo(() => {
-    if (!project) {
-      return { asset: null as AssetBrief | null, hint: "默认来自上游结果", emptyText: "暂无内容" };
-    }
-
-    const idx = enabledSteps.indexOf("video");
-    const upstream = idx > 0 ? enabledSteps.slice(0, idx).reverse() : [];
-    const preferred = upstream.find((s) => s === "background" || s === "try_on");
-
-    if (preferred === "background") {
-      return {
-        asset: project.background_result,
-        hint: locale === "zh" ? "默认来自换背景结果" : "Default: Background result",
-        emptyText: locale === "zh" ? "等待换背景结果图生成…" : "Waiting for Background result…",
-      };
-    }
-    if (preferred === "try_on") {
-      return {
-        asset: project.try_on_result,
-        hint: locale === "zh" ? "默认来自换装结果" : "Default: Try-on result",
-        emptyText: locale === "zh" ? "等待换装结果图生成…" : "Waiting for Try-on result…",
-      };
-    }
-
-    return {
-      asset: project.model_image,
-      hint: locale === "zh" ? "来自人物图" : "From model image",
-      emptyText: locale === "zh" ? "请先上传人物图" : "Please upload a model image first",
-    };
-  }, [enabledSteps, locale, project]);
-
   const validateBeforeRun = useCallback(
     (mode: "pipeline" | "single", step?: StepKey) => {
       if (!project) return "项目未加载";
-      const s = step ?? startStepKey;
-      if (!s) return "未启用任何工作流";
+      const stepsToCheck =
+        mode === "pipeline"
+          ? enabledSteps
+          : [step ?? startStepKey].filter(Boolean) as StepKey[];
+      if (!stepsToCheck.length) return "未启用任何工作流";
 
-      if (s === "try_on") {
-        if (!project.model_image) return "请先上传/选择人物图";
-        if (!project.clothing_image) return "请先上传/选择服装图";
-      }
+      for (const s of stepsToCheck) {
+        const upstream = upstreamProviderByStep[s];
+        const hasUpstream = !!upstream;
+        const upstreamReady = upstream?.asset;
+        const sourceMode = personSourceModeByStep[s] ?? "model_image";
 
-      if (s === "background") {
-        if (project.enable_try_on) {
-          if (backgroundPersonSourceMode === "try_on_result") {
-            if (!project.try_on_result) return "请先完成换装（当前设置：换背景使用换装结果图作为人物图）";
-          } else {
-            if (!project.model_image) return "请先上传/选择人物图（当前设置：换背景使用人物图作为人物图）";
+        if (sourceMode === "upstream") {
+          if (!hasUpstream) return "当前步骤无可用上游来源";
+          if (mode === "single" && !upstreamReady) {
+            return `请先完成上游：${stepLabel[upstream!.step]}`;
           }
         } else {
+          if (uploading.model_image_id) return "人物图正在上传，请稍后";
           if (!project.model_image) return "请先上传/选择人物图";
         }
-        if (!project.background_image) return "请先上传/选择背景图";
-      }
 
-      if (s === "video") return "Video 模块尚未接入";
+        if (s === "try_on") {
+          if (uploading.clothing_image_id) return "服装图正在上传，请稍后";
+          if (!project.clothing_image) return "请先上传/选择服装图";
+        }
 
-      if (
-        mode === "pipeline" &&
-        s === "background" &&
-        project.enable_try_on &&
-        !project.try_on_result
-      ) {
-        return "从换背景开始执行需要已存在换装结果";
+        if (s === "background") {
+          if (uploading.background_image_id) return "背景图正在上传，请稍后";
+          if (!project.background_image) return "请先上传/选择背景图";
+        }
+
+        if (s === "video") {
+          if (mode === "single") return "Video 模块尚未接入";
+        }
       }
 
       return null;
     },
-    [backgroundPersonSourceMode, project, startStepKey]
+    [enabledSteps, project, startStepKey, stepLabel, upstreamProviderByStep, uploading, personSourceModeByStep]
   );
 
   const runPipeline = useCallback(async () => {
@@ -414,30 +608,6 @@ function WorkflowPageInner() {
       }
     },
     [toast]
-  );
-
-  const stepLabel: Record<StepKey, string> = useMemo(() => {
-    if (locale === "zh") {
-      return {
-        try_on: "换装",
-        background: "换背景",
-        video: "视频",
-      };
-    }
-    return {
-      try_on: "Try-on",
-      background: "Background",
-      video: "Video",
-    };
-  }, [locale]);
-
-  const stepResult = useMemo<Record<StepKey, AssetBrief | null | undefined>>(
-    () => ({
-      try_on: project?.try_on_result,
-      background: project?.background_result,
-      video: project?.video_result,
-    }),
-    [project?.try_on_result, project?.background_result, project?.video_result]
   );
 
   const stepStatusText = (p: Project, step: StepKey): string => {
@@ -593,42 +763,92 @@ function WorkflowPageInner() {
               const isRunning = task && ["pending", "queued", "running"].includes(task.status);
 
               const canRunStep = step !== "video";
+              const isVideoResult = step === "video";
+              const personInfo = getPersonSourceInfo(step);
+              const showUpstreamPerson = personInfo.hasUpstream;
+              const personSourceMode = personSourceModeByStep[step] ?? "model_image";
+              const useUpstreamSource = showUpstreamPerson && personSourceMode === "upstream";
 
               return (
-                <section key={step} className="grid gap-4 lg:grid-cols-[420px_1fr]">
-                  <Card className="h-fit">
+                <section key={step} className="grid gap-4 lg:grid-cols-[420px_1fr] lg:items-stretch">
+                  <Card
+                    className="h-fit"
+                    ref={(el) => {
+                      leftCardRefs.current[step] = el;
+                      if (el) syncCardHeight(step);
+                    }}
+                  >
                     <CardHeader>
                       <CardTitle className="text-base">{stepLabel[step]} · 输入</CardTitle>
                     </CardHeader>
                     <CardContent className="space-y-5">
                       {step === "try_on" ? (
                         <>
-                          <div className="space-y-3">
-                            <ImageUploader
+                          {showUpstreamPerson ? (
+                            <div className="rounded-lg border bg-muted/20 p-3">
+                              <div className="text-sm font-medium">人物图来源</div>
+                              <div className="mt-2 flex gap-2">
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant={personSourceMode === "upstream" ? "default" : "outline"}
+                                  disabled={isBusy}
+                                  onClick={() => setPersonSourceMode(step, "upstream")}
+                                >
+                                  来自上游
+                                </Button>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant={personSourceMode === "model_image" ? "default" : "outline"}
+                                  disabled={isBusy}
+                                  onClick={() => setPersonSourceMode(step, "model_image")}
+                                >
+                                  用户上传
+                                </Button>
+                              </div>
+                              <div className="mt-2 text-xs text-muted-foreground">
+                                请选择本步骤人物图的来源。
+                              </div>
+                            </div>
+                          ) : null}
+
+                          {useUpstreamSource ? (
+                            <AssetPreview
                               label="人物图"
-                              description="上传后自动绑定到项目"
-                              file={modelFile}
-                              value={
-                                project.model_image
-                                  ? {
-                                      id: project.model_image.id,
-                                      url: project.model_image.file_url,
-                                      filename: project.model_image.original_filename,
-                                    }
-                                  : null
-                              }
-                              onChange={(f) => setModelFile(f)}
-                              isUploading={!!uploading.model_image_id}
-                              accept="image/jpeg,image/png,image/webp"
+                              hint={personInfo.hint}
+                              asset={personInfo.asset}
+                              emptyText={personInfo.emptyText}
                             />
-                            <RecentAssetPicker
-                              assets={recentModelAssets}
-                              onPick={(id) => {
-                                setModelFile(null);
-                                selectExisting(id, "model_image_id");
-                              }}
-                            />
-                          </div>
+                          ) : (
+                            <div className="space-y-3">
+                              <ImageUploader
+                                label="人物图"
+                                description="上传后自动绑定到项目"
+                                file={modelFile}
+                                value={
+                                  project.model_image
+                                    ? {
+                                        id: project.model_image.id,
+                                        url: project.model_image.file_url,
+                                        filename: project.model_image.original_filename,
+                                      }
+                                    : null
+                                }
+                                onChange={(f) => setModelFile(f)}
+                                onClearValue={() => clearProjectField("model_image_id")}
+                                isUploading={!!uploading.model_image_id}
+                                accept="image/jpeg,image/png,image/webp"
+                              />
+                              <RecentAssetPicker
+                                assets={recentModelAssets}
+                                onPick={(id) => {
+                                  setModelFile(null);
+                                  selectExisting(id, "model_image_id");
+                                }}
+                              />
+                            </div>
+                          )}
 
                           <div className="space-y-3">
                             <ImageUploader
@@ -645,6 +865,7 @@ function WorkflowPageInner() {
                                   : null
                               }
                               onChange={(f) => setClothingFile(f)}
+                              onClearValue={() => clearProjectField("clothing_image_id")}
                               isUploading={!!uploading.clothing_image_id}
                               accept="image/jpeg,image/png,image/webp"
                             />
@@ -661,46 +882,42 @@ function WorkflowPageInner() {
 
                       {step === "background" ? (
                         <>
-                          {project.enable_try_on ? (
-                            <>
-                              <div className="rounded-lg border bg-muted/20 p-3">
-                                <div className="text-sm font-medium">人物图来源</div>
-                                <div className="mt-2 flex gap-2">
-                                  <Button
-                                    type="button"
-                                    size="sm"
-                                    variant={backgroundPersonSourceMode === "try_on_result" ? "default" : "outline"}
-                                    disabled={isBusy}
-                                    onClick={() => setBackgroundPersonSourceMode("try_on_result")}
-                                  >
-                                    使用换装结果
-                                  </Button>
-                                  <Button
-                                    type="button"
-                                    size="sm"
-                                    variant={backgroundPersonSourceMode === "model_image" ? "default" : "outline"}
-                                    disabled={isBusy}
-                                    onClick={() => setBackgroundPersonSourceMode("model_image")}
-                                  >
-                                    使用 人物图
-                                  </Button>
-                                </div>
-                                <div className="mt-2 text-xs text-muted-foreground">
-                                  你可以选择用换装的输出图当人物图，或直接用原人物图进行换背景。
-                                </div>
+                          {showUpstreamPerson ? (
+                            <div className="rounded-lg border bg-muted/20 p-3">
+                              <div className="text-sm font-medium">人物图来源</div>
+                              <div className="mt-2 flex gap-2">
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant={personSourceMode === "upstream" ? "default" : "outline"}
+                                  disabled={isBusy}
+                                  onClick={() => setPersonSourceMode(step, "upstream")}
+                                >
+                                  来自上游
+                                </Button>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant={personSourceMode === "model_image" ? "default" : "outline"}
+                                  disabled={isBusy}
+                                  onClick={() => setPersonSourceMode(step, "model_image")}
+                                >
+                                  用户上传
+                                </Button>
                               </div>
+                              <div className="mt-2 text-xs text-muted-foreground">
+                                请选择本步骤人物图的来源。
+                              </div>
+                            </div>
+                          ) : null}
 
-                              <AssetPreview
-                                label="人物图"
-                                hint={backgroundPersonSourceMode === "model_image" ? "来自人物图（与换装共用）" : "来自换装结果"}
-                                asset={backgroundSource}
-                                emptyText={
-                                  backgroundPersonSourceMode === "model_image"
-                                    ? "请先上传人物图（在换装模块）"
-                                    : "等待换装结果图生成…"
-                                }
-                              />
-                            </>
+                          {useUpstreamSource ? (
+                            <AssetPreview
+                              label="人物图"
+                              hint={personInfo.hint}
+                              asset={personInfo.asset}
+                              emptyText={personInfo.emptyText}
+                            />
                           ) : (
                             <div className="space-y-3">
                               <ImageUploader
@@ -717,6 +934,7 @@ function WorkflowPageInner() {
                                     : null
                                 }
                                 onChange={(f) => setModelFile(f)}
+                                onClearValue={() => clearProjectField("model_image_id")}
                                 isUploading={!!uploading.model_image_id}
                                 accept="image/jpeg,image/png,image/webp"
                               />
@@ -745,6 +963,7 @@ function WorkflowPageInner() {
                                   : null
                               }
                               onChange={(f) => setBackgroundFile(f)}
+                              onClearValue={() => clearProjectField("background_image_id")}
                               isUploading={!!uploading.background_image_id}
                               accept="image/jpeg,image/png,image/webp"
                             />
@@ -761,12 +980,41 @@ function WorkflowPageInner() {
 
                       {step === "video" ? (
                         <>
-                          {project.enable_background || project.enable_try_on ? (
+                          {showUpstreamPerson ? (
+                            <div className="rounded-lg border bg-muted/20 p-3">
+                              <div className="text-sm font-medium">人物图来源</div>
+                              <div className="mt-2 flex gap-2">
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant={personSourceMode === "upstream" ? "default" : "outline"}
+                                  disabled={isBusy}
+                                  onClick={() => setPersonSourceMode(step, "upstream")}
+                                >
+                                  来自上游
+                                </Button>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant={personSourceMode === "model_image" ? "default" : "outline"}
+                                  disabled={isBusy}
+                                  onClick={() => setPersonSourceMode(step, "model_image")}
+                                >
+                                  用户上传
+                                </Button>
+                              </div>
+                              <div className="mt-2 text-xs text-muted-foreground">
+                                请选择本步骤人物图的来源。
+                              </div>
+                            </div>
+                          ) : null}
+
+                          {useUpstreamSource ? (
                             <AssetPreview
                               label="人物图"
-                              hint={videoSourceInfo.hint}
-                              asset={videoSourceInfo.asset}
-                              emptyText={videoSourceInfo.emptyText}
+                              hint={personInfo.hint}
+                              asset={personInfo.asset}
+                              emptyText={personInfo.emptyText}
                             />
                           ) : (
                             <div className="space-y-3">
@@ -784,6 +1032,7 @@ function WorkflowPageInner() {
                                     : null
                                 }
                                 onChange={(f) => setModelFile(f)}
+                                onClearValue={() => clearProjectField("model_image_id")}
                                 isUploading={!!uploading.model_image_id}
                                 accept="image/jpeg,image/png,image/webp"
                               />
@@ -841,7 +1090,13 @@ function WorkflowPageInner() {
                     </CardContent>
                   </Card>
 
-                  <Card>
+                  <Card
+                    className="flex flex-col h-full"
+                    ref={(el) => {
+                      rightCardRefs.current[step] = el;
+                      if (el) syncCardHeight(step);
+                    }}
+                  >
                     <CardHeader className="flex flex-row items-start justify-between gap-3">
                       <div>
                         <CardTitle className="text-base">{stepLabel[step]} · 输出</CardTitle>
@@ -864,8 +1119,8 @@ function WorkflowPageInner() {
                         </Button>
                       </div>
                     </CardHeader>
-                    <CardContent className="space-y-4">
-                      <div className="space-y-2">
+                    <CardContent className="flex-1 flex flex-col gap-4 min-h-0">
+                      <div className="space-y-2 shrink-0">
                         <div className="flex items-center justify-between text-xs text-muted-foreground">
                           <span>{isRunning ? "执行中…" : "进度"}</span>
                           <span>{Math.min(100, Math.max(0, progress))}%</span>
@@ -874,23 +1129,47 @@ function WorkflowPageInner() {
                       </div>
 
                       {result ? (
-                        <div className="grid gap-3 md:grid-cols-[1fr_auto] md:items-start">
-                          <div className="overflow-hidden rounded-lg border bg-muted/30">
-                            <img
-                              src={result.file_url}
-                              alt={result.display_name ?? result.original_filename}
-                              className="h-full w-full object-contain"
-                            />
+                        <div className="flex flex-1 flex-col gap-3 md:flex-row md:items-stretch min-h-0">
+                          <div className="flex-1 min-h-0 overflow-hidden rounded-lg border bg-muted/30 flex items-center justify-center">
+                            {isVideoResult ? (
+                              <video
+                                src={result.file_url}
+                                controls
+                                className="h-full w-auto max-w-full max-h-full object-contain"
+                              />
+                            ) : (
+                              <a
+                                href={result.file_url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="block h-full w-full"
+                              >
+                                <img
+                                  src={result.file_url}
+                                  alt={result.display_name ?? result.original_filename}
+                                  className="h-full w-auto max-w-full max-h-full object-contain mx-auto"
+                                />
+                              </a>
+                            )}
                           </div>
                           <div className="flex md:flex-col gap-2">
                             <Button variant="outline" onClick={() => downloadResult(result)}>
                               <Download className="h-4 w-4 mr-2" />
                               下载
                             </Button>
+                            <Button variant="secondary" asChild>
+                              <a
+                                href={result.file_url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                              >
+                                {isVideoResult ? "查看原视频" : "查看原图"}
+                              </a>
+                            </Button>
                           </div>
                         </div>
                       ) : (
-                        <div className="rounded-lg border border-dashed p-6 text-sm text-muted-foreground">
+                        <div className="flex-1 min-h-0 rounded-lg border border-dashed p-6 text-sm text-muted-foreground">
                           暂无结果
                         </div>
                       )}
