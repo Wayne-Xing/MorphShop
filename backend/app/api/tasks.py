@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.api.deps import DbSession, CurrentUser
-from app.models.asset import Asset
+from app.models.asset import Asset, AssetType
 from app.models.project import Project
 from app.models.task import Task, TaskStatus
 from app.schemas.task import (
@@ -214,7 +214,7 @@ async def create_video_task(
     db: DbSession,
     background_tasks: BackgroundTasks,
 ):
-    """Create a video generation task."""
+    """Create a video motion transfer task."""
     usage_service = UsageService(db)
     allowed, error = await usage_service.check_user_quota(current_user.id)
     if not allowed:
@@ -227,14 +227,24 @@ async def create_video_task(
     if not project.enable_video:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Video workflow is disabled for this project")
 
-    source_image = await get_asset(task_data.source_image_id, current_user.id, db)
+    person_image = await get_asset(task_data.person_image_id, current_user.id, db)
+    reference_video = await get_asset(task_data.reference_video_id, current_user.id, db)
+    if reference_video.asset_type != AssetType.REFERENCE_VIDEO:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="reference_video_id must be a reference_video asset",
+        )
 
     video_service = VideoService(db)
     task = await video_service.create_task(
         project_id=task_data.project_id,
-        source_image=source_image,
-        motion_type=task_data.motion_type,
+        person_image=person_image,
+        reference_video=reference_video,
+        skip_seconds=task_data.skip_seconds,
         duration=task_data.duration,
+        fps=task_data.fps,
+        width=task_data.width,
+        height=task_data.height,
     )
 
     background_tasks.add_task(
@@ -457,31 +467,43 @@ async def submit_and_poll_task(task_id: int, task_type: str):
                 }
 
             elif task_type == "video":
-                source_asset = await db.execute(
-                    select(Asset).where(Asset.id == task.input_params.get("source_image_id"))
+                person_asset = await db.execute(
+                    select(Asset).where(Asset.id == task.input_params.get("person_image_id"))
                 )
-                source_asset = source_asset.scalar_one_or_none()
+                person_asset = person_asset.scalar_one_or_none()
+                ref_asset = await db.execute(
+                    select(Asset).where(Asset.id == task.input_params.get("reference_video_id"))
+                )
+                ref_asset = ref_asset.scalar_one_or_none()
 
-                if not source_asset:
+                if not person_asset or not ref_asset:
                     task.status = TaskStatus.FAILED
-                    task.error_message = "Source asset not found"
+                    task.error_message = "Required asset not found"
                     task.completed_at = datetime.now(timezone.utc)
                     await db.commit()
                     return
 
-                source_data = await load_asset_bytes(source_asset)
-                source_rh_name = await client.upload_image(source_data, source_asset.filename)
+                person_data = await load_asset_bytes(person_asset)
+                ref_data = await load_asset_bytes(ref_asset)
 
-                if not source_rh_name:
+                person_rh_name = await client.upload_image(person_data, person_asset.filename)
+                ref_rh_name = await client.upload_file(ref_data, ref_asset.filename)
+
+                if not person_rh_name or not ref_rh_name:
                     task.status = TaskStatus.FAILED
-                    task.error_message = "Failed to upload image to RunningHub"
+                    task.error_message = "Failed to upload assets to RunningHub"
                     task.completed_at = datetime.now(timezone.utc)
                     await db.commit()
                     return
 
                 params = {
-                    "source_image": source_rh_name,
-                    "motion_type": task.input_params.get("motion_type", "default"),
+                    "person_image": person_rh_name,
+                    "reference_video": ref_rh_name,
+                    "skip_seconds": str(task.input_params.get("skip_seconds", 0)),
+                    "duration": str(task.input_params.get("duration", 10)),
+                    "fps": str(task.input_params.get("fps", 30)),
+                    "width": str(task.input_params.get("width", 720)),
+                    "height": str(task.input_params.get("height", 1280)),
                 }
 
             # Submit to RunningHub

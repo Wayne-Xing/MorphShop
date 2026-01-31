@@ -249,6 +249,11 @@ async def create_project(
         background_person_source=bg_src,
         try_on_person_source=try_on_src,
         video_person_source=video_src,
+        video_skip_seconds=project_data.video_skip_seconds if project_data.video_skip_seconds is not None else 0,
+        video_duration=project_data.video_duration if project_data.video_duration is not None else 10,
+        video_fps=project_data.video_fps if project_data.video_fps is not None else 30,
+        video_width=project_data.video_width if project_data.video_width is not None else 720,
+        video_height=project_data.video_height if project_data.video_height is not None else 1280,
     )
     db.add(project)
     await db.flush()
@@ -375,6 +380,16 @@ async def update_project(
         project.try_on_person_source = _normalize_person_source(update_data.try_on_person_source)
     if update_data.video_person_source is not None:
         project.video_person_source = _normalize_person_source(update_data.video_person_source)
+    if update_data.video_skip_seconds is not None:
+        project.video_skip_seconds = update_data.video_skip_seconds
+    if update_data.video_duration is not None:
+        project.video_duration = update_data.video_duration
+    if update_data.video_fps is not None:
+        project.video_fps = update_data.video_fps
+    if update_data.video_width is not None:
+        project.video_width = update_data.video_width
+    if update_data.video_height is not None:
+        project.video_height = update_data.video_height
 
     if update_data.workflow_steps is not None:
         enabled = {
@@ -434,6 +449,7 @@ async def _run_project_pipeline(project_id: int) -> None:
     from app.database import async_session_maker
     from app.services.try_on import TryOnService
     from app.services.background import BackgroundService
+    from app.services.video import VideoService
     from app.api.tasks import submit_and_poll_task
 
     async with async_session_maker() as db:
@@ -521,16 +537,32 @@ async def _run_project_pipeline(project_id: int) -> None:
                     await submit_and_poll_task(task.id, "background")
 
                 elif step == "video":
-                    # Video module is not integrated yet; keep the pipeline architecture but stop here.
-                    mark_update(
-                        project,
-                        pipeline_active=False,
-                        pipeline_current_step=None,
-                        pipeline_last_error="Video module is not integrated yet. Pipeline stopped after previous step.",
+                    source_id = _resolve_person_source_id(project, steps, "video")
+                    if not source_id:
+                        raise ValueError(
+                            "Missing required asset for video: person image (upstream result or model image)"
+                        )
+                    if not project.reference_video_id:
+                        raise ValueError("Missing required asset for video: reference video")
+                    person = await db.get(Asset, source_id)
+                    reference = await db.get(Asset, project.reference_video_id)
+                    if not person or not reference:
+                        raise ValueError("Asset not found")
+                    if reference.asset_type != "reference_video":
+                        raise ValueError("Invalid reference video asset")
+                    svc = VideoService(db)
+                    task = await svc.create_task(
+                        project.id,
+                        person_image=person,
+                        reference_video=reference,
+                        skip_seconds=project.video_skip_seconds if project.video_skip_seconds is not None else 0,
+                        duration=project.video_duration if project.video_duration is not None else 10,
+                        fps=project.video_fps if project.video_fps is not None else 30,
+                        width=project.video_width if project.video_width is not None else 720,
+                        height=project.video_height if project.video_height is not None else 1280,
                     )
-                    project.status = ProjectStatus.COMPLETED
                     await db.commit()
-                    return
+                    await submit_and_poll_task(task.id, "video")
 
             # Completed all planned steps.
             project = await load_project()
@@ -586,7 +618,17 @@ async def start_pipeline(
     if step not in steps:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="start_step is not in this project's workflow_steps.")
     if step == "video":
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Video module is not integrated yet.")
+        source_id = _resolve_person_source_id(project, steps, "video")
+        if not source_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Missing required asset for video: person image (upstream result or model image)",
+            )
+        if not project.reference_video_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Missing required asset for video: reference_video",
+            )
     if step == "try_on":
         source_id = _resolve_person_source_id(project, steps, "try_on")
         if not source_id or not project.clothing_image_id:

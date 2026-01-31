@@ -118,31 +118,32 @@ class RunningHubClient:
             data = response.json()
             return data.get("code") == 0
 
-    async def upload_image(self, image_data: bytes, filename: str) -> str | None:
+    async def upload_file(self, file_data: bytes, filename: str) -> str | None:
         """
-        Upload image to RunningHub.
+        Upload a file (image/video) to RunningHub.
 
         API Endpoint: POST /task/openapi/upload
 
         Args:
-            image_data: Image bytes
+            file_data: File bytes
             filename: Original filename
 
         Returns:
-            fileName of uploaded image if successful (e.g., "api/xxxx.png")
+            fileName of uploaded file if successful (e.g., "api/xxxx.png")
         """
         # Determine mime type from filename
-        suffix = filename.lower().split(".")[-1] if "." in filename else "jpg"
+        suffix = filename.lower().split(".")[-1] if "." in filename else "bin"
         mime_types = {
             "png": "image/png",
             "jpg": "image/jpeg",
             "jpeg": "image/jpeg",
             "webp": "image/webp",
+            "mp4": "video/mp4",
         }
-        mime_type = mime_types.get(suffix, "image/jpeg")
+        mime_type = mime_types.get(suffix, "application/octet-stream")
 
         async with httpx.AsyncClient(timeout=self.timeout) as client:
-            files = {"file": (filename, image_data, mime_type)}
+            files = {"file": (filename, file_data, mime_type)}
             data = {"apiKey": self.api_key}
             response = await client.post(
                 f"{self.base_url}/task/openapi/upload",
@@ -155,6 +156,10 @@ class RunningHubClient:
                 # Returns fileName like "api/xxxx.png"
                 return result.get("data", {}).get("fileName")
             return None
+
+    async def upload_image(self, image_data: bytes, filename: str) -> str | None:
+        """Upload image to RunningHub (compat wrapper)."""
+        return await self.upload_file(image_data, filename)
 
     async def wait_for_completion(
         self,

@@ -5,7 +5,7 @@ import { I18nProvider } from "@/lib/i18n";
 
 export const metadata: Metadata = {
   title: "MorphShop - AI Model Processing Platform",
-  description: "E-commerce model AI processing platform for virtual try-on, background change, and video generation",
+  description: "E-commerce model AI processing platform for virtual try-on, background change, and video motion transfer",
 };
 
 export default function RootLayout({

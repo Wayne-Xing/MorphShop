@@ -26,10 +26,14 @@ class BackgroundTaskCreate(TaskCreate):
 
 
 class VideoTaskCreate(TaskCreate):
-    """Schema for creating a video generation task."""
-    source_image_id: int  # Usually the background result
-    motion_type: str = Field(default="default", max_length=50)
-    duration: int = Field(default=3, ge=1, le=10)  # seconds
+    """Schema for creating a video motion transfer task."""
+    person_image_id: int  # Usually the background/try-on result or model image
+    reference_video_id: int  # Reference motion video
+    skip_seconds: int = Field(default=0, ge=0)
+    duration: int = Field(default=10, ge=1)
+    fps: int = Field(default=30, ge=1)
+    width: int = Field(default=720, ge=1)
+    height: int = Field(default=1280, ge=1)
 
 
 class TaskResponse(BaseModel):

@@ -43,6 +43,8 @@ class Settings(BaseSettings):
     upload_dir: str = "./uploads"
     max_upload_size: int = 10485760  # 10MB
     allowed_image_types: str = "image/jpeg,image/png,image/webp"
+    max_video_upload_size: int = 209715200  # 200MB
+    allowed_video_types: str = "video/mp4"
 
     # Rate Limiting
     rate_limit_per_minute: int = 10
@@ -66,6 +68,11 @@ class Settings(BaseSettings):
     def allowed_image_types_list(self) -> list[str]:
         """Parse allowed image types as list."""
         return [t.strip() for t in self.allowed_image_types.split(",") if t.strip()]
+
+    @property
+    def allowed_video_types_list(self) -> list[str]:
+        """Parse allowed video types as list."""
+        return [t.strip() for t in self.allowed_video_types.split(",") if t.strip()]
 
 
 @lru_cache()

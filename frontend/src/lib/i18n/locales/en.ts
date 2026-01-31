@@ -76,13 +76,13 @@ export const en = {
       upload: "Upload",
       tryOn: "Try-on",
       background: "Background",
-      video: "Video",
+      video: "Video Motion Transfer",
     },
     stepDescriptions: {
       upload: "Upload model and clothing images",
       tryOn: "Generate virtual try-on",
       background: "Change background",
-      video: "Generate video",
+      video: "Video Motion Transfer",
     },
   },
 
@@ -121,8 +121,8 @@ export const en = {
 
   // Video Step
   video: {
-    title: "Video Generation",
-    description: "Generate a video from your final image",
+    title: "Video Motion Transfer",
+    description: "Transfer motion from a reference video to your person image",
     generateVideo: "Generate Video",
     generatedVideo: "Generated Video",
     motionType: "Motion Type",

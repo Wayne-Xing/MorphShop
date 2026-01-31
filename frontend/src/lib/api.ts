@@ -242,6 +242,31 @@ class ApiClient {
     return response.json();
   }
 
+  async uploadVideo(file: File, assetType: string): Promise<AssetUpload> {
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("asset_type", assetType);
+
+    const headers: HeadersInit = {};
+    const token = this.getToken();
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
+
+    const response = await fetch(`${API_BASE}/upload/video`, {
+      method: "POST",
+      headers,
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: "Upload failed" }));
+      throw new Error(error.detail);
+    }
+
+    return response.json();
+  }
+
   async downloadAsset(assetId: number): Promise<{ blob: Blob; filename: string | null }> {
     const headers: HeadersInit = {};
     const token = this.getToken();
@@ -322,6 +347,11 @@ export interface Project {
   background_person_source?: "try_on_result" | "model_image";
   try_on_person_source?: "upstream" | "model_image";
   video_person_source?: "upstream" | "model_image";
+  video_skip_seconds?: number | null;
+  video_duration?: number | null;
+  video_fps?: number | null;
+  video_width?: number | null;
+  video_height?: number | null;
   model_image: AssetBrief | null;
   clothing_image: AssetBrief | null;
   background_image?: AssetBrief | null;
@@ -361,6 +391,11 @@ export interface ProjectUpdate {
   clothing_image_id: number | null;
   background_image_id: number | null;
   reference_video_id: number | null;
+  video_skip_seconds: number | null;
+  video_duration: number | null;
+  video_fps: number | null;
+  video_width: number | null;
+  video_height: number | null;
 }
 
 export interface Task {
@@ -403,9 +438,13 @@ export interface BackgroundTaskCreate {
 
 export interface VideoTaskCreate {
   project_id: number;
-  source_image_id: number;
-  motion_type?: string;
+  person_image_id: number;
+  reference_video_id: number;
+  skip_seconds?: number;
   duration?: number;
+  fps?: number;
+  width?: number;
+  height?: number;
 }
 
 export interface AssetUpload {

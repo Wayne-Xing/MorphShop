@@ -74,6 +74,11 @@ export function useProject(id: number | null) {
       clothing_image_id: number | null;
       background_image_id: number | null;
       reference_video_id: number | null;
+      video_skip_seconds: number | null;
+      video_duration: number | null;
+      video_fps: number | null;
+      video_width: number | null;
+      video_height: number | null;
     }>
   ) => {
     if (!id) return;

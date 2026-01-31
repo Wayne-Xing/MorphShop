@@ -12,7 +12,10 @@ class NodeInput:
     """Input node configuration."""
     node_id: str
     field_name: str
-    field_type: str = "image"  # image, text, number
+    field_type: str = "image"  # image, text, number, video
+    # Optional params key used to lookup value in params.
+    # When omitted, field_name is used.
+    param_key: str | None = None
 
 
 @dataclass
@@ -56,13 +59,18 @@ BACKGROUND_CONFIG = AppConfig(
 
 VIDEO_CONFIG = AppConfig(
     app_id=settings.runninghub_video_app_id,
-    name="Video Generation",
-    description="Generate video from static image",
+    name="Video Motion Transfer",
+    description="Transfer motion from reference video to a person image",
     inputs=[
-        NodeInput(node_id="image_input", field_name="source_image", field_type="image"),
-        NodeInput(node_id="motion_input", field_name="motion_type", field_type="text"),
+        NodeInput(node_id="167", field_name="image", field_type="image", param_key="person_image"),
+        NodeInput(node_id="52", field_name="video", field_type="video", param_key="reference_video"),
+        NodeInput(node_id="254", field_name="value", field_type="number", param_key="skip_seconds"),
+        NodeInput(node_id="255", field_name="value", field_type="number", param_key="duration"),
+        NodeInput(node_id="257", field_name="value", field_type="number", param_key="fps"),
+        NodeInput(node_id="264", field_name="value", field_type="number", param_key="width"),
+        NodeInput(node_id="265", field_name="value", field_type="number", param_key="height"),
     ],
-    timeout=300,
+    timeout=600,
 )
 
 
@@ -90,7 +98,8 @@ def build_node_inputs(
     """
     node_inputs = []
     for node_input in config.inputs:
-        value = params.get(node_input.field_name)
+        key = node_input.param_key or node_input.field_name
+        value = params.get(key)
         if value is not None:
             # For image type, use "image" as fieldName (RunningHub requirement)
             api_field_name = "image" if node_input.field_type == "image" else node_input.field_name

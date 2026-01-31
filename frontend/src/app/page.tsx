@@ -35,7 +35,7 @@ export default function HomePage() {
           </h1>
           <p className="text-xl text-muted-foreground mb-8">
             Transform your product photos with virtual try-on, background replacement,
-            and video generation. All powered by cutting-edge AI.
+            and video motion transfer. All powered by cutting-edge AI.
           </p>
           <div className="flex items-center justify-center gap-4">
             <Link href="/register">
@@ -80,10 +80,10 @@ export default function HomePage() {
             <div className="w-12 h-12 rounded-lg bg-primary/10 flex items-center justify-center mb-4">
               <Video className="h-6 w-6 text-primary" />
             </div>
-            <h3 className="text-xl font-semibold mb-2">Video Generation</h3>
+            <h3 className="text-xl font-semibold mb-2">Video Motion Transfer</h3>
             <p className="text-muted-foreground">
-              Transform static images into dynamic videos.
-              Add motion and life to your product presentations.
+              Transfer motion from reference videos to your models.
+              Bring static images to life with realistic movement.
             </p>
           </div>
         </div>

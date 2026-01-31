@@ -17,6 +17,11 @@ class ProjectCreate(BaseModel):
     background_person_source: str | None = None
     try_on_person_source: str | None = None
     video_person_source: str | None = None
+    video_skip_seconds: int | None = None
+    video_duration: int | None = None
+    video_fps: int | None = None
+    video_width: int | None = None
+    video_height: int | None = None
 
 
 class ProjectUpdate(BaseModel):
@@ -33,6 +38,11 @@ class ProjectUpdate(BaseModel):
     clothing_image_id: int | None = None
     background_image_id: int | None = None
     reference_video_id: int | None = None
+    video_skip_seconds: int | None = None
+    video_duration: int | None = None
+    video_fps: int | None = None
+    video_width: int | None = None
+    video_height: int | None = None
 
 
 class AssetBrief(BaseModel):
@@ -57,6 +67,11 @@ class ProjectResponse(BaseModel):
     background_person_source: str | None = None
     try_on_person_source: str | None = None
     video_person_source: str | None = None
+    video_skip_seconds: int | None = None
+    video_duration: int | None = None
+    video_fps: int | None = None
+    video_width: int | None = None
+    video_height: int | None = None
 
     model_image: AssetBrief | None = None
     clothing_image: AssetBrief | None = None

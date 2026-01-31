@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
 import { AuthProvider } from "@/components/layout/AuthProvider";
 import { Header } from "@/components/layout/Header";
 import { ImageUploader } from "@/components/workflow/ImageUploader";
@@ -24,9 +25,29 @@ function VideoContent() {
   const searchParams = useSearchParams();
   const projectId = searchParams.get("project");
   const { toast } = useToast();
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
+  const isZh = locale === "zh";
+  const uiText = {
+    personImage: isZh ? "人物图" : "Person Image",
+    personImageDesc: isZh ? "用于动作迁移的人物图" : "Used as the person image for motion transfer.",
+    pickPersonImage: isZh ? "选择已有图片/结果（最近 7 天）" : "Pick an existing image/result (last 7 days)",
+    orUploadPersonImage: isZh ? "或上传新的人物图：" : "Or upload a new person image:",
+    uploadPerson: isZh ? "上传人物图" : "Upload Person",
+    referenceVideo: isZh ? "参考视频" : "Reference Video",
+    pickReferenceVideo: isZh ? "选择参考视频（最近 7 天）" : "Pick a reference video (last 7 days)",
+    orUploadReferenceVideo: isZh ? "或上传新的参考视频：" : "Or upload a new reference video:",
+    uploadReferenceVideo: isZh ? "上传参考视频" : "Upload Reference Video",
+    referenceVideoDesc: isZh ? "动作迁移必需" : "Used as the motion reference.",
+    videoDisabled: isZh ? "该项目未启用视频-动作迁移。" : "Video motion transfer is disabled for this project.",
+    skipSeconds: isZh ? "跳过秒数" : "Skip Seconds",
+    duration: isZh ? "视频时长（秒）" : "Duration (s)",
+    fps: isZh ? "帧率 FPS" : "FPS",
+    width: isZh ? "宽度" : "Width",
+    height: isZh ? "高度" : "Height",
+    assetFallback: isZh ? "素材" : "Asset",
+  };
 
-  const { project, isLoading: projectLoading, refresh: refreshProject } = useProject(
+  const { project, isLoading: projectLoading, refresh: refreshProject, updateProject } = useProject(
     projectId ? parseInt(projectId) : null
   );
 
@@ -41,6 +62,17 @@ function VideoContent() {
     { revalidateOnFocus: false }
   );
 
+  const { data: recentVideos } = useSWR(
+    projectId ? ["assets-recent-7d-reference-video"] : null,
+    () =>
+      api.getAssets({
+        days: 7,
+        asset_type: ["reference_video"],
+        limit: 200,
+      }),
+    { revalidateOnFocus: false }
+  );
+
   const uniqueAssets = useMemo(() => dedupeAssets(recentAssets ?? []), [recentAssets]);
 
   const assetById = useMemo(() => {
@@ -49,12 +81,27 @@ function VideoContent() {
     return map;
   }, [uniqueAssets]);
 
-  const [sourceFile, setSourceFile] = useState<File | null>(null);
-  const [selectedSourceAssetId, setSelectedSourceAssetId] = useState<number | null>(null);
-  const [motionType, setMotionType] = useState("default");
-  const [duration, setDuration] = useState(3);
+  const [personFile, setPersonFile] = useState<File | null>(null);
+  const [selectedPersonAssetId, setSelectedPersonAssetId] = useState<number | null>(null);
+  const [referenceVideoFile, setReferenceVideoFile] = useState<File | null>(null);
+  const [selectedReferenceVideoId, setSelectedReferenceVideoId] = useState<number | null>(null);
+  const [skipSeconds, setSkipSeconds] = useState(0);
+  const [duration, setDuration] = useState(10);
+  const [fps, setFps] = useState(30);
+  const [width, setWidth] = useState(720);
+  const [height, setHeight] = useState(1280);
   const [currentTask, setCurrentTask] = useState<Task | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (!project) return;
+    setSkipSeconds(project.video_skip_seconds ?? 0);
+    setDuration(project.video_duration ?? 10);
+    setFps(project.video_fps ?? 30);
+    setWidth(project.video_width ?? 720);
+    setHeight(project.video_height ?? 1280);
+    setSelectedReferenceVideoId(project.reference_video?.id ?? null);
+  }, [project]);
 
   const { data: taskStatus, isRunning } = useTaskPolling(
     currentTask?.id ?? null,
@@ -99,21 +146,47 @@ function VideoContent() {
 
     if (!project.enable_video) return;
 
-    let sourceImageId: number | undefined = selectedSourceAssetId ?? undefined;
-    if (!sourceImageId && sourceFile) {
-      const srcAsset = await api.uploadImage(sourceFile, "model_image");
-      sourceImageId = srcAsset.id;
+    let personImageId: number | undefined = selectedPersonAssetId ?? undefined;
+    if (!personImageId && personFile) {
+      const srcAsset = await api.uploadImage(personFile, "model_image");
+      personImageId = srcAsset.id;
     }
-    sourceImageId = sourceImageId ?? project.background_result?.id ?? project.try_on_result?.id ?? undefined;
-    if (!sourceImageId) return;
+    personImageId =
+      personImageId ??
+      project.background_result?.id ??
+      project.try_on_result?.id ??
+      project.model_image?.id ??
+      undefined;
+    if (!personImageId) return;
+
+    let referenceVideoId: number | undefined = selectedReferenceVideoId ?? undefined;
+    if (!referenceVideoId && referenceVideoFile) {
+      const vidAsset = await api.uploadVideo(referenceVideoFile, "reference_video");
+      referenceVideoId = vidAsset.id;
+      await updateProject({ reference_video_id: vidAsset.id } as any);
+    }
+    referenceVideoId = referenceVideoId ?? project.reference_video?.id ?? undefined;
+    if (!referenceVideoId) return;
+
+    await updateProject({
+      video_skip_seconds: skipSeconds,
+      video_duration: duration,
+      video_fps: fps,
+      video_width: width,
+      video_height: height,
+    } as any);
 
     setIsSubmitting(true);
     try {
       const task = await api.createVideoTask({
         project_id: project.id,
-        source_image_id: sourceImageId,
-        motion_type: motionType,
+        person_image_id: personImageId,
+        reference_video_id: referenceVideoId,
+        skip_seconds: skipSeconds,
         duration: duration,
+        fps,
+        width,
+        height,
       });
       setCurrentTask(task);
       toast({ title: t.task.taskStarted });
@@ -154,8 +227,10 @@ function VideoContent() {
     );
   }
 
-  const selectedSource = selectedSourceAssetId ? assetById.get(selectedSourceAssetId) : null;
-  const sourceImage = selectedSource || project?.background_result || project?.try_on_result;
+  const selectedSource = selectedPersonAssetId ? assetById.get(selectedPersonAssetId) : null;
+  const sourceImage =
+    selectedSource || project?.background_result || project?.try_on_result || project?.model_image;
+  // Reference video selection handled via project/reference video state.
 
   return (
     <div className="min-h-screen bg-background">
@@ -182,12 +257,12 @@ function VideoContent() {
         </div>
 
         <div className="grid gap-6 lg:grid-cols-2">
-          {/* Source Image */}
+          {/* Person Image */}
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Play className="h-5 w-5" />
-                Source Image
+                {uiText.personImage}
               </CardTitle>
               <CardDescription>{t.video.description}</CardDescription>
             </CardHeader>
@@ -196,7 +271,7 @@ function VideoContent() {
                 <div className="rounded-lg border p-4">
                   <img
                     src={sourceImage.file_url}
-                    alt="Source"
+                    alt={uiText.personImage}
                     className="w-full max-h-80 object-contain rounded"
                   />
                 </div>
@@ -221,70 +296,140 @@ function VideoContent() {
             <CardContent className="space-y-6">
               {!project?.enable_video && (
                 <div className="rounded-lg border border-dashed p-6 text-sm text-muted-foreground">
-                  Video workflow is disabled for this project.
+                  {uiText.videoDisabled}
                 </div>
               )}
 
               <div className="space-y-3">
-                <Label>Source Image</Label>
+                <Label>{uiText.personImage}</Label>
                 <Select
-                  value={selectedSourceAssetId ? String(selectedSourceAssetId) : ""}
-                  onValueChange={(v) => setSelectedSourceAssetId(v ? parseInt(v) : null)}
+                  value={selectedPersonAssetId ? String(selectedPersonAssetId) : ""}
+                  onValueChange={(v) => setSelectedPersonAssetId(v ? parseInt(v) : null)}
                   disabled={!project?.enable_video}
                 >
                   <SelectTrigger>
-                    <SelectValue placeholder="Pick an existing image/result (last 7 days)" />
+                    <SelectValue placeholder={uiText.pickPersonImage} />
                   </SelectTrigger>
                   <SelectContent>
                     {uniqueAssets
                       .filter((a) => a.mime_type.startsWith("image/"))
                       .map((a) => (
                         <SelectItem key={a.id} value={String(a.id)}>
-                          {(a.display_name ?? a.original_filename) || `Asset ${a.id}`}
+                          {(a.display_name ?? a.original_filename) || `${uiText.assetFallback} ${a.id}`}
                         </SelectItem>
                       ))}
                   </SelectContent>
                 </Select>
 
-                <div className="text-xs text-muted-foreground">Or upload a new source image:</div>
+                <div className="text-xs text-muted-foreground">{uiText.orUploadPersonImage}</div>
                 <ImageUploader
-                  label="Upload Source"
-                  description="Used as the first frame for video generation."
-                  file={sourceFile}
-                  onChange={setSourceFile}
+                  label={uiText.uploadPerson}
+                  description={uiText.personImageDesc}
+                  file={personFile}
+                  onChange={setPersonFile}
                   isUploading={isSubmitting}
                 />
               </div>
 
+              {/* Reference Video */}
+              <div className="space-y-3">
+                <Label>{uiText.referenceVideo}</Label>
+                <Select
+                  value={selectedReferenceVideoId ? String(selectedReferenceVideoId) : ""}
+                  onValueChange={async (v) => {
+                    const id = v ? parseInt(v) : null;
+                    setSelectedReferenceVideoId(id);
+                    if (id) {
+                      await updateProject({ reference_video_id: id } as any);
+                    }
+                  }}
+                  disabled={!project?.enable_video}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder={uiText.pickReferenceVideo} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(recentVideos ?? []).map((a) => (
+                      <SelectItem key={a.id} value={String(a.id)}>
+                        {(a.display_name ?? a.original_filename) || `${uiText.assetFallback} ${a.id}`}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <div className="text-xs text-muted-foreground">{uiText.orUploadReferenceVideo}</div>
+                <ImageUploader
+                  label={uiText.uploadReferenceVideo}
+                  description={uiText.referenceVideoDesc}
+                  file={referenceVideoFile}
+                  value={
+                    project?.reference_video
+                      ? {
+                          id: project.reference_video.id,
+                          url: project.reference_video.file_url,
+                          filename: project.reference_video.original_filename,
+                        }
+                      : null
+                  }
+                  onChange={setReferenceVideoFile}
+                  onClearValue={async () => {
+                    await updateProject({ reference_video_id: null } as any);
+                  }}
+                  isUploading={isSubmitting}
+                  accept="video/mp4"
+                  maxSize={200 * 1024 * 1024}
+                  previewType="video"
+                />
+              </div>
+
               {/* Video Settings */}
-              {(sourceImage || sourceFile) && !project?.video_result && !currentTask && (
+              {(sourceImage || personFile) && !project?.video_result && !currentTask && (
                 <div className="space-y-4">
-                  <div className="space-y-2">
-                    <Label>{t.video.motionType}</Label>
-                    <Select value={motionType} onValueChange={setMotionType}>
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="default">Default</SelectItem>
-                        <SelectItem value="walk">Walk</SelectItem>
-                        <SelectItem value="turn">Turn</SelectItem>
-                        <SelectItem value="pose">Pose</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>{t.video.duration}</Label>
-                    <Select value={duration.toString()} onValueChange={(v) => setDuration(parseInt(v))}>
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="3">3s</SelectItem>
-                        <SelectItem value="5">5s</SelectItem>
-                        <SelectItem value="8">8s</SelectItem>
-                      </SelectContent>
-                    </Select>
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label>{uiText.skipSeconds}</Label>
+                      <Input
+                        type="number"
+                        min={0}
+                        value={skipSeconds}
+                        onChange={(e) => setSkipSeconds(parseInt(e.target.value || "0"))}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>{uiText.duration}</Label>
+                      <Input
+                        type="number"
+                        min={1}
+                        value={duration}
+                        onChange={(e) => setDuration(parseInt(e.target.value || "0"))}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>{uiText.fps}</Label>
+                      <Input
+                        type="number"
+                        min={1}
+                        value={fps}
+                        onChange={(e) => setFps(parseInt(e.target.value || "0"))}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>{uiText.width}</Label>
+                      <Input
+                        type="number"
+                        min={1}
+                        value={width}
+                        onChange={(e) => setWidth(parseInt(e.target.value || "0"))}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>{uiText.height}</Label>
+                      <Input
+                        type="number"
+                        min={1}
+                        value={height}
+                        onChange={(e) => setHeight(parseInt(e.target.value || "0"))}
+                      />
+                    </div>
                   </div>
                 </div>
               )}
@@ -339,7 +484,7 @@ function VideoContent() {
                         target="_blank"
                         rel="noopener noreferrer"
                       >
-                        查看原视频
+                        {isZh ? "查看原视频" : "View original"}
                       </a>
                     </Button>
                   </div>
@@ -347,7 +492,7 @@ function VideoContent() {
               )}
 
               {/* Start Button */}
-              {!project?.video_result && !currentTask && (sourceImage || sourceFile) && (
+              {!project?.video_result && !currentTask && (sourceImage || personFile) && (
                 <Button
                   onClick={handleStartVideo}
                   disabled={isSubmitting || !project?.enable_video}

@@ -4,6 +4,7 @@ import { useState, useCallback, useEffect } from "react";
 import { Upload, X, Loader2 } from "lucide-react";
 import { cn, formatFileSize } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { useI18n } from "@/lib/i18n";
 
 interface ImageUploaderProps {
   label: string;
@@ -18,6 +19,7 @@ interface ImageUploaderProps {
   error?: string;
   accept?: string;
   maxSize?: number; // bytes
+  previewType?: "image" | "video";
 }
 
 export function ImageUploader({
@@ -32,7 +34,10 @@ export function ImageUploader({
   error,
   accept = "image/jpeg,image/png,image/webp",
   maxSize = 10 * 1024 * 1024, // 10MB
+  previewType = "image",
 }: ImageUploaderProps) {
+  const { locale } = useI18n();
+  const isZh = locale === "zh";
   const [isDragging, setIsDragging] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
   const [localPreviewUrl, setLocalPreviewUrl] = useState<string | null>(null);
@@ -58,12 +63,42 @@ export function ImageUploader({
     };
   }, [file]);
 
+  const acceptList = accept
+    .split(",")
+    .map((t) => t.trim())
+    .filter(Boolean);
+  const acceptLabel = acceptList
+    .map((t) => t.split("/")[1]?.toUpperCase() ?? t.toUpperCase())
+    .join(", ");
+
+  const inferByExtension = (file: File): boolean => {
+    const name = file.name.toLowerCase();
+    const ext = name.includes(".") ? name.substring(name.lastIndexOf(".")) : "";
+    if (!ext) return false;
+    const extByType: Record<string, string[]> = {
+      "image/jpeg": [".jpg", ".jpeg"],
+      "image/png": [".png"],
+      "image/webp": [".webp"],
+      "video/mp4": [".mp4"],
+    };
+    return acceptList.some((type) => extByType[type]?.includes(ext));
+  };
+
   const validateFile = (file: File): string | null => {
-    if (!accept.split(",").some((type) => file.type === type.trim())) {
-      return "Invalid file type. Please upload JPEG, PNG, or WebP.";
+    const typeAccepted = acceptList.some((type) => file.type === type);
+    const typeFallback =
+      !file.type || file.type === "application/octet-stream"
+        ? inferByExtension(file)
+        : false;
+    if (!typeAccepted && !typeFallback) {
+      return isZh
+        ? `文件类型不支持。支持：${acceptLabel || accept}。`
+        : `Invalid file type. Allowed: ${acceptLabel || accept}.`;
     }
     if (file.size > maxSize) {
-      return `File too large. Maximum size is ${formatFileSize(maxSize)}.`;
+      return isZh
+        ? `文件过大。最大为 ${formatFileSize(maxSize)}。`
+        : `File too large. Maximum size is ${formatFileSize(maxSize)}.`;
     }
     return null;
   };
@@ -133,18 +168,29 @@ export function ImageUploader({
         <div className="relative rounded-lg border bg-muted/50 p-4">
           <div className="flex items-center gap-4">
             <div className="relative h-20 w-20 overflow-hidden rounded-md bg-muted">
-              <img
-                src={localPreviewUrl ?? value!.url}
-                alt={file?.name ?? value?.filename ?? "selected"}
-                className="h-full w-full object-cover"
-                width={80}
-                height={80}
-              />
+              {previewType === "video" ? (
+                <video
+                  src={localPreviewUrl ?? value!.url}
+                  className="h-full w-full object-cover"
+                />
+              ) : (
+                <img
+                  src={localPreviewUrl ?? value!.url}
+                  alt={file?.name ?? value?.filename ?? "selected"}
+                  className="h-full w-full object-cover"
+                  width={80}
+                  height={80}
+                />
+              )}
             </div>
             <div className="flex-1 min-w-0">
               <p className="text-sm font-medium truncate">{file?.name ?? value?.filename}</p>
               <p className="text-xs text-muted-foreground">
-                {isUploading ? "Uploading..." : localPreviewUrl ? "Selected" : "Uploaded"}
+                {isUploading
+                  ? (isZh ? "上传中..." : "Uploading...")
+                  : localPreviewUrl
+                    ? (isZh ? "已选择" : "Selected")
+                    : (isZh ? "已上传" : "Uploaded")}
               </p>
             </div>
             <Button
@@ -186,10 +232,14 @@ export function ImageUploader({
             )}
             <div>
               <p className="text-sm font-medium">
-                {isUploading ? "Uploading..." : "Drop image here or click to upload"}
+                {isUploading
+                  ? (isZh ? "上传中..." : "Uploading...")
+                  : (isZh ? "拖拽文件到此或点击上传" : "Drop file here or click to upload")}
               </p>
               <p className="text-xs text-muted-foreground mt-1">
-                JPEG, PNG, or WebP up to {formatFileSize(maxSize)}
+                {isZh
+                  ? `${acceptLabel || accept}，最大 ${formatFileSize(maxSize)}`
+                  : `${acceptLabel || accept} up to ${formatFileSize(maxSize)}`}
               </p>
             </div>
           </div>

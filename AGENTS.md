@@ -3,7 +3,9 @@
 ## Project Structure & Module Organization
 MorphShop is a full‑stack app with a clear split between backend and frontend.
 - `backend/`: FastAPI app in `backend/app/` (API routes, services, models, schemas), with migrations in `backend/alembic/`.
+- `backend/app/services/runninghub/`: RunningHub app configs and client; video motion transfer uses this layer.
 - `frontend/`: Next.js 14 app in `frontend/src/` (App Router, components, hooks, lib, i18n).
+- `frontend/src/app/modules/video/`: Video motion transfer module UI.
 - `uploads/`: Local file storage for uploaded assets when using local storage.
 - Root config: `docker-compose.yml`, `.env.example`, and service Dockerfiles.
 
@@ -12,6 +14,7 @@ Docker (recommended):
 - `docker compose up -d --build` — start full stack.
 - `docker compose exec backend alembic upgrade head` — apply DB migrations.
 - `docker compose up -d --build celery-worker celery-beat` — enable scheduled cleanup.
+- `docker compose up -d --force-recreate --no-deps backend` — reload backend after env changes.
 
 Local backend:
 - `cd backend`
@@ -43,7 +46,8 @@ Local frontend:
 
 ## Configuration & Secrets
 - Use `.env.example` (root, backend, frontend) as templates; never commit real keys.
-- RunningHub API keys and app IDs are required for try‑on/background/video tasks.
+- RunningHub config is required: `RUNNINGHUB_API_KEY`, `RUNNINGHUB_TRY_ON_APP_ID`, `RUNNINGHUB_BACKGROUND_APP_ID`, `RUNNINGHUB_VIDEO_APP_ID`.
+- Upload limits are controlled by `MAX_UPLOAD_SIZE`, `MAX_VIDEO_UPLOAD_SIZE`, and `ALLOWED_VIDEO_TYPES`.
 
 ## Agent Notes
 - For deeper architecture details, see `CLAUDE.md`.

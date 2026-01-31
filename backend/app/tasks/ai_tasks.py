@@ -87,8 +87,13 @@ async def _process_ai_task_async(celery_task, task_id: int):
                 }
             elif task.task_type == TaskType.VIDEO:
                 params = {
-                    "source_image": task.input_params.get("source_image_url"),
-                    "motion_type": task.input_params.get("motion_type", "default"),
+                    "person_image": task.input_params.get("person_image_url"),
+                    "reference_video": task.input_params.get("reference_video_url"),
+                    "skip_seconds": str(task.input_params.get("skip_seconds", 0)),
+                    "duration": str(task.input_params.get("duration", 10)),
+                    "fps": str(task.input_params.get("fps", 30)),
+                    "width": str(task.input_params.get("width", 720)),
+                    "height": str(task.input_params.get("height", 1280)),
                 }
 
             # Create task on RunningHub

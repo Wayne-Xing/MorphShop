@@ -20,27 +20,40 @@ class VideoService:
     async def create_task(
         self,
         project_id: int,
-        source_image: Asset,
-        motion_type: str = "default",
-        duration: int = 3,
+        person_image: Asset,
+        reference_video: Asset,
+        skip_seconds: int = 0,
+        duration: int = 10,
+        fps: int = 30,
+        width: int = 720,
+        height: int = 1280,
     ) -> Task:
         """
-        Create a video generation task.
+        Create a video motion transfer task.
 
         Args:
             project_id: Project ID
-            source_image: Source image asset (usually background result)
-            motion_type: Type of motion/animation
-            duration: Video duration in seconds
+            person_image: Person image asset (usually upstream result)
+            reference_video: Reference motion video asset
+            skip_seconds: Seconds to skip at the start of reference video
+            duration: Total output duration in seconds
+            fps: Output frames per second
+            width: Output video width
+            height: Output video height
 
         Returns:
             Created Task object
         """
         input_params = {
-            "source_image_id": source_image.id,
-            "source_image_url": source_image.file_url,
-            "motion_type": motion_type,
+            "person_image_id": person_image.id,
+            "person_image_url": person_image.file_url,
+            "reference_video_id": reference_video.id,
+            "reference_video_url": reference_video.file_url,
+            "skip_seconds": skip_seconds,
             "duration": duration,
+            "fps": fps,
+            "width": width,
+            "height": height,
         }
 
         task = Task(
@@ -66,8 +79,13 @@ class VideoService:
             Updated Task with RunningHub task ID
         """
         params = {
-            "source_image": task.input_params.get("source_image_url"),
-            "motion_type": task.input_params.get("motion_type", "default"),
+            "person_image": task.input_params.get("person_image_url"),
+            "reference_video": task.input_params.get("reference_video_url"),
+            "skip_seconds": str(task.input_params.get("skip_seconds", 0)),
+            "duration": str(task.input_params.get("duration", 10)),
+            "fps": str(task.input_params.get("fps", 30)),
+            "width": str(task.input_params.get("width", 720)),
+            "height": str(task.input_params.get("height", 1280)),
         }
 
         try:

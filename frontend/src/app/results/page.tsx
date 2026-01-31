@@ -83,8 +83,15 @@ function ResultsPageInner() {
                 </CardHeader>
                 <CardContent className="space-y-3">
                   <div className="overflow-hidden rounded-lg border bg-muted/30">
-                    {/* Results are images today; video is reserved */}
-                    <img src={a.file_url} alt={a.original_filename} className="h-48 w-full object-contain" />
+                    {a.mime_type?.startsWith("video/") || a.asset_type === "video_result" ? (
+                      <video
+                        src={a.file_url}
+                        controls
+                        className="h-48 w-full object-contain"
+                      />
+                    ) : (
+                      <img src={a.file_url} alt={a.original_filename} className="h-48 w-full object-contain" />
+                    )}
                   </div>
                   <Button variant="outline" className="w-full" onClick={() => download(a)}>
                     <Download className="h-4 w-4 mr-2" />

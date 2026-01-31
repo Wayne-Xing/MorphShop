@@ -23,6 +23,29 @@ def validate_image(file: UploadFile) -> None:
         )
 
 
+def validate_video(file: UploadFile) -> None:
+    """Validate uploaded video file."""
+    if file.content_type in settings.allowed_video_types_list:
+        return
+
+    # Some browsers send "application/octet-stream" for MP4 files.
+    if file.content_type == "application/octet-stream":
+        return
+
+    filename = (file.filename or "").lower()
+    if filename.endswith(".mp4"):
+        return
+
+    if file.content_type and file.content_type.startswith("video/"):
+        return
+
+    if file.content_type not in settings.allowed_video_types_list:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid file type. Allowed: {', '.join(settings.allowed_video_types_list)}",
+        )
+
+
 @router.post("/image", response_model=AssetUploadResponse, status_code=status.HTTP_201_CREATED)
 @limiter.limit("30/minute")
 async def upload_image(
@@ -64,6 +87,69 @@ async def upload_image(
         content_hash=content_hash,
         asset_type=asset_type,
         mime_type=file.content_type or "image/jpeg",
+        file_size=len(content),
+    )
+    db.add(asset)
+    await db.flush()
+    await db.refresh(asset)
+
+    return AssetUploadResponse(
+        id=asset.id,
+        file_url=asset.file_url,
+        content_hash=asset.content_hash,
+        original_filename=asset.original_filename,
+        asset_type=asset.asset_type,
+        display_name=asset.display_name,
+    )
+
+
+@router.post("/video", response_model=AssetUploadResponse, status_code=status.HTTP_201_CREATED)
+@limiter.limit("10/minute")
+async def upload_video(
+    request: Request,
+    current_user: CurrentUser,
+    db: DbSession,
+    file: UploadFile = File(...),
+    asset_type: AssetType = Form(...),
+):
+    """Upload a reference video file."""
+    if asset_type != AssetType.REFERENCE_VIDEO:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid asset_type for video upload",
+        )
+
+    # Validate file type
+    validate_video(file)
+
+    # Read file content
+    content = await file.read()
+    content_hash = hashlib.sha256(content).hexdigest()
+
+    # Check file size
+    if len(content) > settings.max_video_upload_size:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"File too large. Maximum size: {settings.max_video_upload_size // 1024 // 1024}MB",
+        )
+
+    # Save file
+    relative_path, filename = await storage.save_file(
+        content=content,
+        original_filename=file.filename or "video.mp4",
+        subfolder="videos",
+    )
+
+    # Create asset record
+    asset = Asset(
+        user_id=current_user.id,
+        filename=filename,
+        original_filename=file.filename or "video.mp4",
+        file_path=relative_path,
+        file_url=storage.get_file_url(relative_path),
+        content_hash=content_hash,
+        asset_type=asset_type,
+        mime_type=file.content_type or "video/mp4",
         file_size=len(content),
     )
     db.add(asset)

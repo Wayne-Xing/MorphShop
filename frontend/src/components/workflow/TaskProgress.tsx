@@ -3,6 +3,7 @@
 import { Loader2, CheckCircle, XCircle, Clock } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import { cn, formatDuration } from "@/lib/utils";
+import { useI18n } from "@/lib/i18n";
 
 interface TaskProgressProps {
   status: "pending" | "queued" | "running" | "success" | "failed";
@@ -13,12 +14,6 @@ interface TaskProgressProps {
   taskType: "try_on" | "background" | "video";
 }
 
-const taskTypeLabels = {
-  try_on: "Virtual Try-On",
-  background: "Background Change",
-  video: "Video Generation",
-};
-
 export function TaskProgress({
   status,
   progress,
@@ -27,7 +22,14 @@ export function TaskProgress({
   estimatedTime,
   taskType,
 }: TaskProgressProps) {
-  const label = taskTypeLabels[taskType];
+  const { t, locale } = useI18n();
+  const labelMap = {
+    try_on: t.tryOn.title,
+    background: t.background.title,
+    video: t.video.title,
+  };
+  const label = labelMap[taskType];
+  const isZh = locale === "zh";
 
   return (
     <div className="rounded-lg border bg-card p-6 space-y-4">
@@ -40,16 +42,16 @@ export function TaskProgress({
         <>
           <Progress value={progress} className="h-2" />
           <div className="flex items-center justify-between text-sm text-muted-foreground">
-            <span>{progress}% complete</span>
+            <span>{isZh ? `${progress}% 完成` : `${progress}% complete`}</span>
             {estimatedTime && estimatedTime > 0 && (
               <span className="flex items-center gap-1">
                 <Clock className="h-3 w-3" />
-                ~{formatDuration(estimatedTime)} remaining
+                {isZh ? `预计剩余 ${formatDuration(estimatedTime)}` : `~${formatDuration(estimatedTime)} remaining`}
               </span>
             )}
           </div>
           <p className="text-sm text-muted-foreground animate-pulse-gentle">
-            AI is processing your image...
+            {t.task.aiProcessing}
           </p>
         </>
       )}
@@ -78,7 +80,7 @@ export function TaskProgress({
               download
               className="text-sm text-primary hover:underline"
             >
-              Download result
+              {t.common.download}
             </a>
           </div>
         </div>
@@ -90,7 +92,7 @@ export function TaskProgress({
             <XCircle className="h-5 w-5 text-destructive mt-0.5" />
             <div>
               <p className="text-sm font-medium text-destructive">
-                Processing failed
+                {t.task.processingFailed}
               </p>
               {errorMessage && (
                 <p className="text-sm text-muted-foreground mt-1">
@@ -98,7 +100,7 @@ export function TaskProgress({
                 </p>
               )}
               <p className="text-sm text-muted-foreground mt-2">
-                Please try again or contact support if the issue persists.
+                {t.task.tryAgain}
               </p>
             </div>
           </div>
@@ -108,7 +110,7 @@ export function TaskProgress({
       {status === "pending" && (
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <div className="h-2 w-2 rounded-full bg-muted-foreground animate-pulse" />
-          <span>Waiting to start...</span>
+          <span>{t.task.waitingToStart}</span>
         </div>
       )}
     </div>
@@ -120,30 +122,31 @@ function StatusBadge({
 }: {
   status: "pending" | "queued" | "running" | "success" | "failed";
 }) {
+  const { t } = useI18n();
   const config = {
     pending: {
       icon: Clock,
-      label: "Pending",
+      label: t.task.pending,
       className: "text-muted-foreground bg-muted",
     },
     queued: {
       icon: Clock,
-      label: "Queued",
+      label: t.task.queued,
       className: "text-yellow-600 bg-yellow-50",
     },
     running: {
       icon: Loader2,
-      label: "Processing",
+      label: t.task.running,
       className: "text-blue-600 bg-blue-50",
     },
     success: {
       icon: CheckCircle,
-      label: "Complete",
+      label: t.task.success,
       className: "text-green-600 bg-green-50",
     },
     failed: {
       icon: XCircle,
-      label: "Failed",
+      label: t.task.failed,
       className: "text-destructive bg-destructive/10",
     },
   };

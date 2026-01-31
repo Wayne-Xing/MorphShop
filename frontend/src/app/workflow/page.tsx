@@ -113,6 +113,51 @@ function RecentAssetPicker({
   );
 }
 
+function RecentVideoPicker({
+  assets,
+  onPick,
+}: {
+  assets: Asset[] | undefined;
+  onPick: (assetId: number) => void;
+}) {
+  if (!assets?.length) return null;
+  const unique = dedupeAssets(assets).filter((a) => a.mime_type?.startsWith("video/"));
+  const thumbs = unique.slice(0, 8);
+  const placeholders = Math.max(0, 8 - thumbs.length);
+  return (
+    <div className="rounded-lg border p-3">
+      <div className="text-xs text-muted-foreground mb-2">
+        最近 7 天素材（点击选择）
+      </div>
+      <div className="grid grid-cols-4 grid-rows-2 gap-2">
+        {thumbs.map((a) => (
+          <button
+            key={a.id}
+            type="button"
+            className="group relative aspect-square overflow-hidden rounded-md border hover:border-primary"
+            onClick={() => onPick(a.id)}
+            title={a.display_name ?? a.original_filename}
+          >
+            <video
+              src={a.file_url}
+              muted
+              playsInline
+              className="h-full w-full object-cover"
+            />
+            <div className="pointer-events-none absolute inset-0 bg-black/0 group-hover:bg-black/10" />
+          </button>
+        ))}
+        {Array.from({ length: placeholders }).map((_, idx) => (
+          <div
+            key={`empty-video-${idx}`}
+            className="aspect-square rounded-md border border-dashed bg-muted/30"
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function WorkflowPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -258,13 +303,13 @@ function WorkflowPageInner() {
       return {
         try_on: "换装",
         background: "换背景",
-        video: "视频",
+        video: "视频-动作迁移",
       };
     }
     return {
       try_on: "Try-on",
       background: "Background",
-      video: "Video",
+      video: "Video Motion Transfer",
     };
   }, [locale]);
 
@@ -289,6 +334,12 @@ function WorkflowPageInner() {
   const [modelFile, setModelFile] = useState<File | null>(null);
   const [clothingFile, setClothingFile] = useState<File | null>(null);
   const [backgroundFile, setBackgroundFile] = useState<File | null>(null);
+  const [referenceVideoFile, setReferenceVideoFile] = useState<File | null>(null);
+  const [videoSkipSeconds, setVideoSkipSeconds] = useState(0);
+  const [videoDuration, setVideoDuration] = useState(10);
+  const [videoFps, setVideoFps] = useState(30);
+  const [videoWidth, setVideoWidth] = useState(720);
+  const [videoHeight, setVideoHeight] = useState(1280);
   const lastUploadKeyRef = useRef<Record<string, string | undefined>>({});
 
   const getFileKey = useCallback((file: File) => {
@@ -305,12 +356,16 @@ function WorkflowPageInner() {
     async (
       file: File,
       assetType: string,
-      projectField: "model_image_id" | "clothing_image_id" | "background_image_id"
+      projectField: "model_image_id" | "clothing_image_id" | "background_image_id" | "reference_video_id",
+      kind: "image" | "video" = "image"
     ) => {
       if (!project) return;
       setUploadingFlag(projectField, true);
       try {
-        const uploaded = await api.uploadImage(file, assetType);
+        const uploaded =
+          kind === "video"
+            ? await api.uploadVideo(file, assetType)
+            : await api.uploadImage(file, assetType);
         await updateProject({ [projectField]: uploaded.id } as any);
         await refreshProject();
         toast({ title: "素材已更新" });
@@ -354,6 +409,32 @@ function WorkflowPageInner() {
     lastUploadKeyRef.current.background_image_id = key;
     uploadAndBind(backgroundFile, "background_image", "background_image_id");
   }, [backgroundFile, uploadAndBind, getFileKey]);
+  useEffect(() => {
+    if (!referenceVideoFile) {
+      lastUploadKeyRef.current.reference_video_id = undefined;
+      return;
+    }
+    const key = getFileKey(referenceVideoFile);
+    if (lastUploadKeyRef.current.reference_video_id === key) return;
+    lastUploadKeyRef.current.reference_video_id = key;
+    uploadAndBind(referenceVideoFile, "reference_video", "reference_video_id", "video");
+  }, [referenceVideoFile, uploadAndBind, getFileKey]);
+
+  useEffect(() => {
+    if (!project) return;
+    setVideoSkipSeconds(project.video_skip_seconds ?? 0);
+    setVideoDuration(project.video_duration ?? 10);
+    setVideoFps(project.video_fps ?? 30);
+    setVideoWidth(project.video_width ?? 720);
+    setVideoHeight(project.video_height ?? 1280);
+  }, [
+    project?.id,
+    project?.video_skip_seconds,
+    project?.video_duration,
+    project?.video_fps,
+    project?.video_width,
+    project?.video_height,
+  ]);
 
   const { data: recentModelAssets } = useSWR<Asset[]>(
     project ? ["assets", "model_image"] : null,
@@ -370,11 +451,16 @@ function WorkflowPageInner() {
     () => api.getAssets({ days: 7, asset_type: ["background_image"] }),
     { revalidateOnFocus: false }
   );
+  const { data: recentReferenceVideos } = useSWR<Asset[]>(
+    project ? ["assets", "reference_video"] : null,
+    () => api.getAssets({ days: 7, asset_type: ["reference_video"] }),
+    { revalidateOnFocus: false }
+  );
 
   const selectExisting = useCallback(
     async (
       assetId: number,
-      projectField: "model_image_id" | "clothing_image_id" | "background_image_id"
+      projectField: "model_image_id" | "clothing_image_id" | "background_image_id" | "reference_video_id"
     ) => {
       try {
         await updateProject({ [projectField]: assetId } as any);
@@ -387,9 +473,27 @@ function WorkflowPageInner() {
   );
 
   const clearProjectField = useCallback(
-    async (projectField: "model_image_id" | "clothing_image_id" | "background_image_id") => {
+    async (projectField: "model_image_id" | "clothing_image_id" | "background_image_id" | "reference_video_id") => {
       try {
         await updateProject({ [projectField]: null } as any);
+        await refreshProject();
+      } catch (err) {
+        toast({ title: "更新失败", description: getErrorMessage(err), variant: "destructive" });
+      }
+    },
+    [refreshProject, toast, updateProject]
+  );
+
+  const persistVideoParams = useCallback(
+    async (patch: Partial<{
+      video_skip_seconds: number;
+      video_duration: number;
+      video_fps: number;
+      video_width: number;
+      video_height: number;
+    }>) => {
+      try {
+        await updateProject(patch as any);
         await refreshProject();
       } catch (err) {
         toast({ title: "更新失败", description: getErrorMessage(err), variant: "destructive" });
@@ -533,13 +637,29 @@ function WorkflowPageInner() {
         }
 
         if (s === "video") {
-          if (mode === "single") return "Video 模块尚未接入";
+          if (uploading.reference_video_id) return "参考视频正在上传，请稍等";
+          if (!project.reference_video) return "请先上传/选择参考视频";
+          if (videoDuration <= 0 || videoFps <= 0 || videoWidth <= 0 || videoHeight <= 0) {
+            return "请修正视频参数";
+          }
         }
       }
 
       return null;
     },
-    [enabledSteps, project, startStepKey, stepLabel, upstreamProviderByStep, uploading, personSourceModeByStep]
+    [
+      enabledSteps,
+      project,
+      startStepKey,
+      stepLabel,
+      upstreamProviderByStep,
+      uploading,
+      personSourceModeByStep,
+      videoDuration,
+      videoFps,
+      videoWidth,
+      videoHeight,
+    ]
   );
 
   const runPipeline = useCallback(async () => {
@@ -554,6 +674,15 @@ function WorkflowPageInner() {
       return;
     }
     try {
+      if (enabledSteps.includes("video")) {
+        await updateProject({
+          video_skip_seconds: videoSkipSeconds,
+          video_duration: videoDuration,
+          video_fps: videoFps,
+          video_width: videoWidth,
+          video_height: videoHeight,
+        } as any);
+      }
       await api.startPipeline(project.id, { start_step: startStepKey ?? undefined, chain: true });
       toast({ title: "已开始执行工作流（顺序执行）" });
       refreshProject();
@@ -561,7 +690,7 @@ function WorkflowPageInner() {
     } catch (e) {
       toast({ title: "启动失败", description: getErrorMessage(e), variant: "destructive" });
     }
-  }, [project, isBusy, refreshProject, refreshTasks, startStepKey, toast, validateBeforeRun]);
+  }, [project, isBusy, refreshProject, refreshTasks, startStepKey, toast, validateBeforeRun, enabledSteps, updateProject, videoSkipSeconds, videoDuration, videoFps, videoWidth, videoHeight]);
 
   const cancelPipeline = useCallback(async () => {
     if (!project) return;
@@ -587,6 +716,15 @@ function WorkflowPageInner() {
         return;
       }
       try {
+        if (step === "video") {
+          await updateProject({
+            video_skip_seconds: videoSkipSeconds,
+            video_duration: videoDuration,
+            video_fps: videoFps,
+            video_width: videoWidth,
+            video_height: videoHeight,
+          } as any);
+        }
         await api.startPipeline(project.id, { start_step: step, chain: false });
         toast({ title: `已开始执行：${step}` });
         refreshProject();
@@ -595,7 +733,7 @@ function WorkflowPageInner() {
         toast({ title: "启动失败", description: getErrorMessage(e), variant: "destructive" });
       }
     },
-    [project, isBusy, refreshProject, refreshTasks, toast, validateBeforeRun]
+    [project, isBusy, refreshProject, refreshTasks, toast, validateBeforeRun, updateProject, videoSkipSeconds, videoDuration, videoFps, videoWidth, videoHeight]
   );
 
   const downloadResult = useCallback(
@@ -662,7 +800,7 @@ function WorkflowPageInner() {
               <CardTitle>项目不存在或无权限</CardTitle>
             </CardHeader>
             <CardContent>
-              <Button onClick={() => router.push("/dashboard")}>返回 Dashboard</Button>
+              <Button onClick={() => router.push("/dashboard")}>返回 工作台</Button>
             </CardContent>
           </Card>
         </main>
@@ -762,7 +900,7 @@ function WorkflowPageInner() {
               const result = stepResult[step];
               const isRunning = task && ["pending", "queued", "running"].includes(task.status);
 
-              const canRunStep = step !== "video";
+              const canRunStep = true;
               const isVideoResult = step === "video";
               const personInfo = getPersonSourceInfo(step);
               const showUpstreamPerson = personInfo.hasUpstream;
@@ -1020,7 +1158,7 @@ function WorkflowPageInner() {
                             <div className="space-y-3">
                               <ImageUploader
                                 label="人物图"
-                                description="Video 必需（预留）"
+                                description="用于动作迁移的人物图"
                                 file={modelFile}
                                 value={
                                   project.model_image
@@ -1045,42 +1183,88 @@ function WorkflowPageInner() {
                               />
                             </div>
                           )}
-                          <div className="rounded-lg border p-4">
-                            <div className="flex items-baseline justify-between gap-3">
-                              <div className="text-sm font-medium">参考视频</div>
-                              <div className="text-xs text-muted-foreground">预留（后续接入）</div>
-                            </div>
-                            <div className="mt-3">
-                              <Input type="file" disabled />
-                            </div>
-                            <div className="mt-2 text-xs text-muted-foreground">
-                              将接入动作迁移 API：输出“与参考视频相同动作”的人物视频。
-                            </div>
+                                                    <div className="space-y-3">
+                            <ImageUploader
+                              label="参考视频"
+                              description="动作迁移必需"
+                              file={referenceVideoFile}
+                              value={
+                                project.reference_video
+                                  ? {
+                                      id: project.reference_video.id,
+                                      url: project.reference_video.file_url,
+                                      filename: project.reference_video.original_filename,
+                                    }
+                                  : null
+                              }
+                              onChange={(f) => setReferenceVideoFile(f)}
+                              onClearValue={() => clearProjectField("reference_video_id")}
+                              isUploading={!!uploading.reference_video_id}
+                              accept="video/mp4"
+                              maxSize={200 * 1024 * 1024}
+                              previewType="video"
+                            />
+                            <RecentVideoPicker
+                              assets={recentReferenceVideos}
+                              onPick={(id) => {
+                                setReferenceVideoFile(null);
+                                selectExisting(id, "reference_video_id");
+                              }}
+                            />
                           </div>
 
                           <div className="rounded-lg border p-4">
                             <div className="flex items-baseline justify-between gap-3">
                               <div className="text-sm font-medium">视频参数</div>
-                              <div className="text-xs text-muted-foreground">预留（后续接入）</div>
                             </div>
                             <div className="mt-3 grid gap-3 sm:grid-cols-2">
                               <div className="space-y-2">
-                                <Label>帧率 FPS</Label>
-                                <Input disabled placeholder="例如：25" />
+                                <Label>跳过秒数</Label>
+                                <Input
+                                  type="number"
+                                  min={0}
+                                  value={videoSkipSeconds}
+                                  onChange={(e) => setVideoSkipSeconds(parseInt(e.target.value || "0"))}
+                                  onBlur={() => persistVideoParams({ video_skip_seconds: videoSkipSeconds })}
+                                />
                               </div>
                               <div className="space-y-2">
                                 <Label>视频时长（秒）</Label>
-                                <Input disabled placeholder="例如：6" />
+                                <Input
+                                  type="number"
+                                  min={1}
+                                  value={videoDuration}
+                                  onChange={(e) => setVideoDuration(parseInt(e.target.value || "0"))}
+                                  onBlur={() => persistVideoParams({ video_duration: videoDuration })}
+                                />
                               </div>
                               <div className="space-y-2">
-                                <Label>开头跳过（秒）</Label>
-                                <Input disabled placeholder="例如：0" />
+                                <Label>帧率 FPS</Label>
+                                <Input
+                                  type="number"
+                                  min={1}
+                                  value={videoFps}
+                                  onChange={(e) => setVideoFps(parseInt(e.target.value || "0"))}
+                                  onBlur={() => persistVideoParams({ video_fps: videoFps })}
+                                />
                               </div>
                               <div className="space-y-2">
                                 <Label>分辨率（宽 x 高）</Label>
                                 <div className="grid grid-cols-2 gap-2">
-                                  <Input disabled placeholder="宽" />
-                                  <Input disabled placeholder="高" />
+                                  <Input
+                                    type="number"
+                                    min={1}
+                                    value={videoWidth}
+                                    onChange={(e) => setVideoWidth(parseInt(e.target.value || "0"))}
+                                    onBlur={() => persistVideoParams({ video_width: videoWidth })}
+                                  />
+                                  <Input
+                                    type="number"
+                                    min={1}
+                                    value={videoHeight}
+                                    onChange={(e) => setVideoHeight(parseInt(e.target.value || "0"))}
+                                    onBlur={() => persistVideoParams({ video_height: videoHeight })}
+                                  />
                                 </div>
                               </div>
                             </div>
@@ -1111,8 +1295,8 @@ function WorkflowPageInner() {
                           variant="secondary"
                           size="sm"
                           onClick={() => runSingleStep(step)}
-                          disabled={!canRunStep}
-                          title={canRunStep ? "仅执行当前一步，不自动执行后续" : "Video 模块尚未接入"}
+                          disabled={!canRunStep || isBusy}
+                          title="仅执行当前一步，不自动执行后续"
                         >
                           <PlayCircle className="h-4 w-4 mr-2" />
                           单独启动

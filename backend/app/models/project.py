@@ -81,6 +81,13 @@ class Project(Base):
         nullable=True,
     )
 
+    # Video motion transfer parameters
+    video_skip_seconds: Mapped[int] = mapped_column(Integer, default=0)
+    video_duration: Mapped[int] = mapped_column(Integer, default=10)
+    video_fps: Mapped[int] = mapped_column(Integer, default=30)
+    video_width: Mapped[int] = mapped_column(Integer, default=720)
+    video_height: Mapped[int] = mapped_column(Integer, default=1280)
+
     # Result references
     try_on_result_id: Mapped[int | None] = mapped_column(
         Integer,

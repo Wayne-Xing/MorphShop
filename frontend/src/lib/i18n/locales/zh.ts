@@ -78,13 +78,13 @@ export const zh: TranslationKeys = {
       upload: "上传",
       tryOn: "换装",
       background: "换背景",
-      video: "视频",
+      video: "视频-动作迁移",
     },
     stepDescriptions: {
       upload: "上传模特图和服装图",
       tryOn: "AI虚拟换装",
       background: "更换背景",
-      video: "生成视频",
+      video: "视频-动作迁移",
     },
   },
 
@@ -123,8 +123,8 @@ export const zh: TranslationKeys = {
 
   // Video Step
   video: {
-    title: "视频生成",
-    description: "从最终图片生成视频",
+    title: "视频-动作迁移",
+    description: "参考视频驱动人物动作迁移",
     generateVideo: "生成视频",
     generatedVideo: "生成的视频",
     motionType: "动作类型",
