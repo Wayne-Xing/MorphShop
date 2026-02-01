@@ -147,6 +147,25 @@ npm run dev
 
 ## 常见问题（排查指引）
 
+### 工作流运行到「视频-动作迁移」很快失败，提示 `Timeout failed (...)`
+
+这通常不是前端问题，而是后端轮询 RunningHub 结果时超时导致任务被标记为失败。
+
+排查/处理：
+
+1) 检查后端实际超时配置（Docker 时后端读取 `backend/.env`）：
+
+- `MAX_TASK_TIMEOUT`：全局任务轮询超时（秒）
+
+2) 检查视频应用的预期耗时配置：
+
+- `backend/app/services/runninghub/apps.py` 里的 `VIDEO_CONFIG.timeout`（默认 600 秒）
+
+建议：
+
+- 视频任务通常比图片任务更慢。若 `MAX_TASK_TIMEOUT` 设置过小（例如 300 秒），会出现视频步骤提前失败。
+- 现在后端会使用 `max(MAX_TASK_TIMEOUT, VIDEO_CONFIG.timeout)` 作为最终等待时间，并在错误信息中显示真实超时（例如 `Timeout failed (5m)` / `Timeout failed (10m)`），便于定位。
+
 ### 登录提示 “Request failed”
 
 这通常意味着前端没拿到后端返回的 JSON（例如：后端未启动、反向代理失败、后端崩溃返回了 HTML/500）。建议按顺序检查：

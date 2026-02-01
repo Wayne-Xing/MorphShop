@@ -73,6 +73,17 @@ def _mime_from_ext(ext: str) -> str:
     }.get(ext, "application/octet-stream")
 
 
+def _format_duration(seconds: int) -> str:
+    """Format seconds into a short human-friendly duration label."""
+    if seconds <= 0:
+        return "0s"
+    if seconds % 3600 == 0:
+        return f"{seconds // 3600}h"
+    if seconds % 60 == 0:
+        return f"{seconds // 60}m"
+    return f"{seconds}s"
+
+
 async def verify_project_access(
     project_id: int,
     user_id: int,
@@ -527,9 +538,13 @@ async def submit_and_poll_task(task_id: int, task_type: str):
                 await db.commit()
 
             # Poll for completion with progress updates
+            # Per-app configs encode the expected upper bound for that workflow. In dev it is
+            # easy to set MAX_TASK_TIMEOUT too low (e.g., 300s) which is fine for image tasks
+            # but too short for video. Use the larger of the two to avoid premature timeouts.
+            effective_timeout = int(max(settings.max_task_timeout, getattr(app_config, "timeout", 0) or 0))
             status_response = await client.wait_for_completion(
                 response.task_id,
-                timeout=settings.max_task_timeout,
+                timeout=effective_timeout,
                 on_progress=update_progress,
             )
 
@@ -605,7 +620,8 @@ async def submit_and_poll_task(task_id: int, task_type: str):
 
         except TimeoutError:
             task.status = TaskStatus.FAILED
-            task.error_message = "Timeout failed (1h)"
+            effective_timeout = int(locals().get("effective_timeout", settings.max_task_timeout))
+            task.error_message = f"Timeout failed ({_format_duration(effective_timeout)})"
             task.completed_at = datetime.now(timezone.utc)
             await db.commit()
 
