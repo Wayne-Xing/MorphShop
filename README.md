@@ -42,7 +42,7 @@ cp .env.example .env
 说明：
 
 - Docker Compose 会读取根目录 `.env` 用于变量替换（例如 `RUNNINGHUB_API_KEY` / App ID）。
-- 后端应用本身还会读取 `backend/.env`（Pydantic Settings 的 `env_file=.env`），Docker 挂载 `./backend:/app` 时对应容器内的 `/app/.env`。
+- 后端应用会优先读取根目录 `.env`，并兼容读取 `backend/.env`（用于旧的本地开发方式）；Docker 下仍以容器环境变量为准。
 
 至少需要配置（字段名以 `.env.example` 为准）：
 

@@ -1,16 +1,23 @@
 """Application configuration management."""
 from functools import lru_cache
+from pathlib import Path
 from typing import Optional
 
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+_BACKEND_DIR = Path(__file__).resolve().parents[2]
+
+
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        # Prefer the repo-root `.env` so Docker/local can share one source of truth.
+        # Fall back to `backend/.env` for backwards compatibility (local-only setups).
+        env_file=[str(_REPO_ROOT / ".env"), str(_BACKEND_DIR / ".env")],
         env_file_encoding="utf-8",
         case_sensitive=False,
     )
