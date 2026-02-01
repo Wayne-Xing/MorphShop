@@ -6,7 +6,7 @@ MorphShop 是一个面向电商场景的 AI 模特工作流平台，支持「虚
 
 - 换装（Try-on）：上传人物图 + 服装图，生成换装结果图
 - 换背景（Background）：对换装结果图或任意人物图进行背景替换（当前版本使用「背景图」作为输入）
-- 视频（Video）：后续接入（当前仅预留架构与 UI）
+- 视频（Video）：上传/选择人物图 + 参考视频，执行动作迁移并生成视频结果
 - 项目管理：以项目维度组织素材与结果
 - 工作流解耦：创建项目时可勾选启用 Try-on / Background / Video，三个模块可完全独立运行
 - 顺序可配置：创建项目时可拖拽调整执行顺序（例如先换背景后换装）
@@ -39,6 +39,11 @@ MorphShop 是一个面向电商场景的 AI 模特工作流平台，支持「虚
 cp .env.example .env
 ```
 
+说明：
+
+- Docker Compose 会读取根目录 `.env` 用于变量替换（例如 `RUNNINGHUB_API_KEY` / App ID）。
+- 后端应用本身还会读取 `backend/.env`（Pydantic Settings 的 `env_file=.env`），Docker 挂载 `./backend:/app` 时对应容器内的 `/app/.env`。
+
 至少需要配置（字段名以 `.env.example` 为准）：
 
 - `JWT_SECRET_KEY`
@@ -49,10 +54,24 @@ cp .env.example .env
 
 ### 2) 启动服务
 
-- ????????????????? / ?????????????????????
-- ???? ? ??? ? ?????????????????????????????
-  ??? ? ?? ? ?? ??
-- ?? 7 ???????? 8 ??????????????????
+启动全栈（数据库/Redis/后端/前端）：
+
+```bash
+docker compose up -d --build
+```
+
+首次启动（或有迁移变更）后，应用数据库迁移：
+
+```bash
+docker compose exec backend alembic upgrade head
+```
+
+查看服务状态/日志（可选）：
+
+```bash
+docker compose ps
+docker compose logs -f --tail 200 backend
+```
 
 ### 3)（可选但推荐）启用结果 7 天清理
 
@@ -119,6 +138,7 @@ npm run dev
 
 - 换背景人物图默认衔接：当启用换装且换装在换背景之前时，换背景默认使用“换装结果图”作为人物图
 - 可选开关：你也可以切换为“使用人物图”（与换装共用同一张人物图）
+- 视频人物图默认衔接：优先使用上游的“最近一步图片结果”（例如换背景/换装结果），否则回退到人物图（model image）；参考视频必须提供
 - 选择素材：同一窗口支持「上传新素材（上传即预览）」与「选择最近 7 天已有素材」
 - 最近 7 天素材库会按内容去重：同一张素材只显示一次
 
@@ -142,7 +162,7 @@ npm run dev
 
 访问：`/results`
 
-- 展示当前用户最近 7 天内生成的全部结果（换装/换背景/视频占位）
+- 展示当前用户最近 7 天内生成的全部结果（换装/换背景/视频）
 - 支持下载（下载文件名与展示名一致）
 
 ## 常见问题（排查指引）
@@ -171,7 +191,7 @@ npm run dev
 这通常意味着前端没拿到后端返回的 JSON（例如：后端未启动、反向代理失败、后端崩溃返回了 HTML/500）。建议按顺序检查：
 
 1. 后端健康检查：打开 http://localhost:8000/health
-2. Docker 日志：`docker logs --tail 200 morphshop-backend`
+2. Docker 日志：`docker compose logs --tail 200 backend`
 3. 如果你使用 Docker 前端：确认前端容器能访问后端容器（同一 compose 网络）
 
 ### Docker 启动前端报 “3000 端口被占用”
