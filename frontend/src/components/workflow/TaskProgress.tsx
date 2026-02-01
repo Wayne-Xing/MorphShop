@@ -53,6 +53,11 @@ export function TaskProgress({
           <p className="text-sm text-muted-foreground animate-pulse-gentle">
             {t.task.aiProcessing}
           </p>
+          <div className="rounded-md border border-dashed p-3 text-xs text-muted-foreground">
+            {isZh
+              ? "该步骤可能需要 30 分钟以上。请保持页面在线（不要关闭标签页/浏览器），并保持登录状态。"
+              : "This step may take 30+ minutes. Keep this page open (don’t close the tab/browser) and stay signed in."}
+          </div>
         </>
       )}
 

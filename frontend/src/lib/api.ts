@@ -10,6 +10,7 @@ interface ApiError {
 
 class ApiClient {
   private accessToken: string | null = null;
+  private refreshInFlight: Promise<void> | null = null;
 
   constructor() {
     if (typeof window !== "undefined") {
@@ -41,24 +42,72 @@ class ApiClient {
     }
   }
 
+  private async ensureRefreshed(): Promise<void> {
+    if (typeof window === "undefined") throw new Error("Unauthorized");
+
+    const refreshToken = localStorage.getItem("refresh_token");
+    if (!refreshToken) throw new Error("Unauthorized");
+
+    if (this.refreshInFlight) return this.refreshInFlight;
+
+    this.refreshInFlight = (async () => {
+      const resp = await fetch(
+        `${API_BASE}/auth/refresh?refresh_token=${encodeURIComponent(refreshToken)}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+        }
+      );
+
+      if (!resp.ok) {
+        this.clearToken();
+        throw new Error("Unauthorized");
+      }
+
+      const tokens = (await resp.json()) as { access_token: string; refresh_token: string };
+      if (tokens?.access_token) this.setToken(tokens.access_token);
+      if (typeof window !== "undefined" && tokens?.refresh_token) {
+        localStorage.setItem("refresh_token", tokens.refresh_token);
+      }
+    })().finally(() => {
+      this.refreshInFlight = null;
+    });
+
+    return this.refreshInFlight;
+  }
+
+  private async fetchWithAuth(endpoint: string, options: RequestInit = {}, allowRefresh = true): Promise<Response> {
+    const headers = new Headers(options.headers || undefined);
+    const token = this.getToken();
+    if (token && !headers.has("Authorization")) {
+      headers.set("Authorization", `Bearer ${token}`);
+    }
+
+    const resp = await fetch(`${API_BASE}${endpoint}`, {
+      ...options,
+      headers,
+    });
+
+    if (resp.status === 401 && allowRefresh && !endpoint.startsWith("/auth/")) {
+      try {
+        await this.ensureRefreshed();
+        return this.fetchWithAuth(endpoint, options, false);
+      } catch {
+        // fall through and let caller handle as unauthorized
+      }
+    }
+
+    return resp;
+  }
+
   private async request<T>(
     endpoint: string,
     options: RequestInit = {}
   ): Promise<T> {
-    const headers: HeadersInit = {
-      "Content-Type": "application/json",
-      ...options.headers,
-    };
+    const headers = new Headers(options.headers || undefined);
+    if (!headers.has("Content-Type")) headers.set("Content-Type", "application/json");
 
-    const token = this.getToken();
-    if (token) {
-      (headers as Record<string, string>)["Authorization"] = `Bearer ${token}`;
-    }
-
-    const response = await fetch(`${API_BASE}${endpoint}`, {
-      ...options,
-      headers,
-    });
+    const response = await this.fetchWithAuth(endpoint, { ...options, headers });
 
     if (!response.ok) {
       // Prefer JSON error payload, but don't assume the response is JSON.
@@ -222,15 +271,8 @@ class ApiClient {
     formData.append("file", file);
     formData.append("asset_type", assetType);
 
-    const headers: HeadersInit = {};
-    const token = this.getToken();
-    if (token) {
-      headers["Authorization"] = `Bearer ${token}`;
-    }
-
-    const response = await fetch(`${API_BASE}/upload/image`, {
+    const response = await this.fetchWithAuth("/upload/image", {
       method: "POST",
-      headers,
       body: formData,
     });
 
@@ -247,15 +289,8 @@ class ApiClient {
     formData.append("file", file);
     formData.append("asset_type", assetType);
 
-    const headers: HeadersInit = {};
-    const token = this.getToken();
-    if (token) {
-      headers["Authorization"] = `Bearer ${token}`;
-    }
-
-    const response = await fetch(`${API_BASE}/upload/video`, {
+    const response = await this.fetchWithAuth("/upload/video", {
       method: "POST",
-      headers,
       body: formData,
     });
 
@@ -268,15 +303,8 @@ class ApiClient {
   }
 
   async downloadAsset(assetId: number): Promise<{ blob: Blob; filename: string | null }> {
-    const headers: HeadersInit = {};
-    const token = this.getToken();
-    if (token) {
-      headers["Authorization"] = `Bearer ${token}`;
-    }
-
-    const response = await fetch(`${API_BASE}/assets/${assetId}/download`, {
+    const response = await this.fetchWithAuth(`/assets/${assetId}/download`, {
       method: "GET",
-      headers,
     });
 
     if (!response.ok) {

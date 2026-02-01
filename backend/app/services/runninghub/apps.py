@@ -70,7 +70,8 @@ VIDEO_CONFIG = AppConfig(
         NodeInput(node_id="264", field_name="value", field_type="number", param_key="width"),
         NodeInput(node_id="265", field_name="value", field_type="number", param_key="height"),
     ],
-    timeout=600,
+    # Video generation is significantly slower than image steps; allow long-running jobs.
+    timeout=3600,
 )
 
 

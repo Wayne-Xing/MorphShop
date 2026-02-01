@@ -5,6 +5,7 @@ import { Upload, X, Loader2 } from "lucide-react";
 import { cn, formatFileSize } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { useI18n } from "@/lib/i18n";
+import { Modal } from "@/components/ui/modal";
 
 interface ImageUploaderProps {
   label: string;
@@ -41,6 +42,7 @@ export function ImageUploader({
   const [isDragging, setIsDragging] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
   const [localPreviewUrl, setLocalPreviewUrl] = useState<string | null>(null);
+  const [isPreviewOpen, setIsPreviewOpen] = useState(false);
 
   // Keep preview URL in sync with selected file (immediate preview before upload completes).
   useEffect(() => {
@@ -71,29 +73,36 @@ export function ImageUploader({
     .map((t) => t.split("/")[1]?.toUpperCase() ?? t.toUpperCase())
     .join(", ");
 
-  const inferByExtension = (file: File): boolean => {
-    const name = file.name.toLowerCase();
-    const ext = name.includes(".") ? name.substring(name.lastIndexOf(".")) : "";
-    if (!ext) return false;
-    const extByType: Record<string, string[]> = {
-      "image/jpeg": [".jpg", ".jpeg"],
-      "image/png": [".png"],
-      "image/webp": [".webp"],
-      "video/mp4": [".mp4"],
-    };
-    return acceptList.some((type) => extByType[type]?.includes(ext));
-  };
+  const validateFile = useCallback((file: File): string | null => {
+    const list = accept
+      .split(",")
+      .map((t) => t.trim())
+      .filter(Boolean);
+    const label = list.map((t) => t.split("/")[1]?.toUpperCase() ?? t.toUpperCase()).join(", ");
 
-  const validateFile = (file: File): string | null => {
-    const typeAccepted = acceptList.some((type) => file.type === type);
+    const inferByExtension = (): boolean => {
+      const name = file.name.toLowerCase();
+      const ext = name.includes(".") ? name.substring(name.lastIndexOf(".")) : "";
+      if (!ext) return false;
+      const extByType: Record<string, string[]> = {
+        "image/jpeg": [".jpg", ".jpeg"],
+        "image/png": [".png"],
+        "image/webp": [".webp"],
+        "video/mp4": [".mp4"],
+      };
+      return list.some((type) => extByType[type]?.includes(ext));
+    };
+
+    const typeAccepted = list.some((type) => file.type === type);
     const typeFallback =
       !file.type || file.type === "application/octet-stream"
-        ? inferByExtension(file)
+        ? inferByExtension()
         : false;
+
     if (!typeAccepted && !typeFallback) {
       return isZh
-        ? `文件类型不支持。支持：${acceptLabel || accept}。`
-        : `Invalid file type. Allowed: ${acceptLabel || accept}.`;
+        ? `文件类型不支持。支持：${label || accept}。`
+        : `Invalid file type. Allowed: ${label || accept}.`;
     }
     if (file.size > maxSize) {
       return isZh
@@ -101,7 +110,7 @@ export function ImageUploader({
         : `File too large. Maximum size is ${formatFileSize(maxSize)}.`;
     }
     return null;
-  };
+  }, [accept, maxSize, isZh]);
 
   const handleFile = useCallback(
     (file: File) => {
@@ -113,7 +122,7 @@ export function ImageUploader({
       setLocalError(null);
       onChange(file);
     },
-    [onChange, maxSize, accept]
+    [onChange, validateFile]
   );
 
   const handleDrop = useCallback(
@@ -156,6 +165,8 @@ export function ImageUploader({
   }, [onChange, onClearValue]);
 
   const displayError = error || localError;
+  const previewUrl = localPreviewUrl ?? value?.url ?? null;
+  const previewTitle = file?.name ?? value?.filename ?? (isZh ? "预览" : "Preview");
 
   return (
     <div className="space-y-2">
@@ -167,15 +178,24 @@ export function ImageUploader({
       {localPreviewUrl || value ? (
         <div className="relative rounded-lg border bg-muted/50 p-4">
           <div className="flex items-center gap-4">
-            <div className="relative h-20 w-20 overflow-hidden rounded-md bg-muted">
+            <div
+              className="relative h-20 w-20 overflow-hidden rounded-md bg-muted cursor-pointer"
+              role="button"
+              tabIndex={0}
+              onClick={() => setIsPreviewOpen(true)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") setIsPreviewOpen(true);
+              }}
+              aria-label={isZh ? "点击预览素材" : "Click to preview asset"}
+            >
               {previewType === "video" ? (
                 <video
-                  src={localPreviewUrl ?? value!.url}
+                  src={previewUrl ?? undefined}
                   className="h-full w-full object-cover"
                 />
               ) : (
                 <img
-                  src={localPreviewUrl ?? value!.url}
+                  src={previewUrl ?? undefined}
                   alt={file?.name ?? value?.filename ?? "selected"}
                   className="h-full w-full object-cover"
                   width={80}
@@ -196,12 +216,31 @@ export function ImageUploader({
             <Button
               variant="ghost"
               size="icon"
-              onClick={handleRemove}
+              onClick={(e) => {
+                e.stopPropagation();
+                handleRemove();
+              }}
               disabled={isUploading}
             >
               <X className="h-4 w-4" />
             </Button>
           </div>
+
+          <Modal open={isPreviewOpen} onOpenChange={setIsPreviewOpen} title={previewTitle}>
+            {previewType === "video" ? (
+              <video
+                src={previewUrl ?? undefined}
+                controls
+                className="w-full max-h-[75vh] object-contain rounded"
+              />
+            ) : (
+              <img
+                src={previewUrl ?? undefined}
+                alt={previewTitle}
+                className="w-full max-h-[75vh] object-contain rounded"
+              />
+            )}
+          </Modal>
         </div>
       ) : (
         <div

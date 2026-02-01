@@ -13,6 +13,7 @@ import { AuthProvider } from "@/components/layout/AuthProvider";
 import { Header } from "@/components/layout/Header";
 import { ImageUploader } from "@/components/workflow/ImageUploader";
 import { TaskProgress } from "@/components/workflow/TaskProgress";
+import { Modal } from "@/components/ui/modal";
 import { useProject } from "@/hooks/useProjects";
 import { useTaskPolling } from "@/hooks/useTaskPolling";
 import { api, Task, Asset } from "@/lib/api";
@@ -92,6 +93,7 @@ function VideoContent() {
   const [height, setHeight] = useState(1280);
   const [currentTask, setCurrentTask] = useState<Task | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isSourcePreviewOpen, setIsSourcePreviewOpen] = useState(false);
 
   useEffect(() => {
     if (!project) return;
@@ -273,7 +275,24 @@ function VideoContent() {
                     src={sourceImage.file_url}
                     alt={uiText.personImage}
                     className="w-full max-h-80 object-contain rounded"
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => setIsSourcePreviewOpen(true)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") setIsSourcePreviewOpen(true);
+                    }}
                   />
+                  <Modal
+                    open={isSourcePreviewOpen}
+                    onOpenChange={setIsSourcePreviewOpen}
+                    title={(sourceImage.display_name ?? sourceImage.original_filename) || uiText.personImage}
+                  >
+                    <img
+                      src={sourceImage.file_url}
+                      alt={uiText.personImage}
+                      className="w-full max-h-[75vh] object-contain rounded"
+                    />
+                  </Modal>
                 </div>
               ) : (
                 <div className="rounded-lg border border-dashed p-8 text-center text-muted-foreground">
