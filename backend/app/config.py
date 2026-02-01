@@ -7,8 +7,8 @@ from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-_REPO_ROOT = Path(__file__).resolve().parents[3]
-_BACKEND_DIR = Path(__file__).resolve().parents[2]
+_BACKEND_ROOT = Path(__file__).resolve().parents[1]  # .../backend
+_REPO_ROOT = _BACKEND_ROOT.parent  # .../ (repo root when running from source tree)
 
 
 class Settings(BaseSettings):
@@ -17,7 +17,9 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         # Prefer the repo-root `.env` so Docker/local can share one source of truth.
         # Fall back to `backend/.env` for backwards compatibility (local-only setups).
-        env_file=[str(_REPO_ROOT / ".env"), str(_BACKEND_DIR / ".env")],
+        # Note: In Docker compose, env vars are injected via `docker-compose.yml`; `env_file`
+        # is primarily for local dev. Missing files are fine.
+        env_file=[str(_REPO_ROOT / ".env"), str(_BACKEND_ROOT / ".env")],
         env_file_encoding="utf-8",
         case_sensitive=False,
     )
